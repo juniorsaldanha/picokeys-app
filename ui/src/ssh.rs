@@ -126,6 +126,7 @@ fn Tooling(env: SshEnv, on_change: EventHandler<()>) -> Element {
 #[component]
 fn Keys(env: SshEnv, keys: Vec<SshKey>, on_change: EventHandler<()>) -> Element {
     let mut creating = use_signal(|| false);
+    let mut importing = use_signal(|| false);
     let can_create = env.keygen.is_some();
     rsx! {
         Card {
@@ -135,10 +136,23 @@ fn Keys(env: SshEnv, keys: Vec<SshKey>, on_change: EventHandler<()>) -> Element 
                         CardTitle { "SSH keys" }
                         CardDescription { "Security-key SSH keys in ~/.ssh. The private part stays on the Pico Key; the file only points to it." }
                     }
-                    Button { size: ButtonSize::Sm, disabled: !can_create || creating(), onclick: move |_| creating.set(true), Plus {} "New key" }
+                    div { class: "flex shrink-0 gap-2",
+                        Button { variant: ButtonVariant::Outline, size: ButtonSize::Sm, disabled: !can_create || importing(), onclick: move |_| importing.set(true), Download {} "Import from Pico" }
+                        Button { size: ButtonSize::Sm, disabled: !can_create || creating(), onclick: move |_| creating.set(true), Plus {} "New key" }
+                    }
                 }
             }
             CardContent { class: "flex flex-col gap-3",
+                if importing() {
+                    ImportForm {
+                        on_done: move |n: usize| {
+                            importing.set(false);
+                            if n > 0 {
+                                on_change.call(())
+                            }
+                        },
+                    }
+                }
                 if creating() {
                     NewKeyForm {
                         on_done: move |made: bool| {
@@ -177,6 +191,45 @@ fn Keys(env: SshEnv, keys: Vec<SshKey>, on_change: EventHandler<()>) -> Element 
                     }
                 }
             }
+        }
+    }
+}
+
+#[component]
+fn ImportForm(on_done: EventHandler<usize>) -> Element {
+    let st = use_context::<AppState>();
+    let mut pin = use_signal(move || st.pin.peek().clone().unwrap_or_default());
+    let mut busy = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+    let run = move |e: FormEvent| async move {
+        e.prevent_default();
+        busy.set(true);
+        error.set(None);
+        let p = pin();
+        match api::ssh_recover(Some(p.as_str()).filter(|p| !p.is_empty())).await {
+            Ok(k) => on_done.call(k.len()),
+            Err(e) => error.set(Some(humanize(&e))),
+        }
+        busy.set(false);
+    };
+    rsx! {
+        form { class: "flex flex-col gap-3 rounded-lg border bg-muted/30 p-4 animate-in fade-in", onsubmit: run,
+            p { class: "text-sm text-muted-foreground",
+                "Copies the SSH keys stored on this Pico (created with “Store on the key”) into ~/.ssh, e.g. on a new computer. Existing files are left alone."
+            }
+            div { class: "flex flex-wrap items-end gap-2",
+                div { class: "flex flex-col gap-1.5",
+                    Label { "Key PIN" }
+                    Input { r#type: InputType::Password, value: pin(), oninput: move |e: FormEvent| pin.set(e.value()) }
+                }
+                Button { variant: ButtonVariant::Ghost, button_type: "button", disabled: busy(), onclick: move |_| on_done.call(0), "Cancel" }
+                Button { button_type: "submit", disabled: busy() || pin().is_empty(),
+                    if busy() { Spinner {} } else { Download {} }
+                    "Import"
+                }
+                if busy() { span { class: "flex items-center gap-1.5 text-sm text-primary animate-pulse", Fingerprint { class: "size-4" } "Touch your key if it blinks…" } }
+            }
+            if let Some(e) = error() { p { class: "text-sm text-destructive", "{e}" } }
         }
     }
 }

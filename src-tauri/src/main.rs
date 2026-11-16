@@ -157,6 +157,11 @@ async fn ssh_generate(key: NewSshKey) -> Result<SshKey, String> {
 }
 
 #[tauri::command]
+async fn ssh_recover(pin: Option<String>) -> Result<Vec<SshKey>, String> {
+    blocking(move || ssh::recover(pin.as_deref())).await
+}
+
+#[tauri::command]
 async fn ssh_git_setup(setup: GitSetup) -> Result<GitSigning, String> {
     tauri::async_runtime::spawn_blocking(move || ssh::setup_git(&setup)).await.map_err(|e| e.to_string())?
 }
@@ -177,7 +182,7 @@ fn main() {
             list_devices, fido_info, set_pin, change_pin, list_passkeys, delete_passkey, wink,
             pico_info, write_phy, fido_reset, oath_list, oath_calculate, oath_add, oath_delete,
             otp_status, otp_configure, otp_delete, otp_swap, random_hex, fw_releases, fw_flash,
-            ssh_env, ssh_install_openssh, ssh_keys, ssh_generate, ssh_git_setup, ssh_add_host, ssh_test
+            ssh_env, ssh_install_openssh, ssh_keys, ssh_generate, ssh_recover, ssh_git_setup, ssh_add_host, ssh_test
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

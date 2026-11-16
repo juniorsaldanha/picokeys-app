@@ -208,6 +208,10 @@ pub fn keys() -> R<Vec<SshKey>> {
 /// Runs an OpenSSH tool non-interactively. A PIN, if needed, is handed over through a
 /// throwaway SSH_ASKPASS helper that echoes it from the environment (never on the command line).
 fn run_openssh(tool: &Path, args: &[String], pin: Option<&str>, timeout: Duration) -> R<(bool, String)> {
+    run_openssh_in(tool, args, pin, timeout, None)
+}
+
+fn run_openssh_in(tool: &Path, args: &[String], pin: Option<&str>, timeout: Duration, cwd: Option<&Path>) -> R<(bool, String)> {
     let dir = std::env::temp_dir().join(format!("pkm-askpass-{}", std::process::id()));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let helper = if cfg!(windows) {
@@ -226,7 +230,11 @@ fn run_openssh(tool: &Path, args: &[String], pin: Option<&str>, timeout: Duratio
         p
     };
     let result = (|| {
-        let mut child = Command::new(tool)
+        let mut cmd = Command::new(tool);
+        if let Some(d) = cwd {
+            cmd.current_dir(d);
+        }
+        let mut child = cmd
             .args(args)
             .env("SSH_ASKPASS", &helper)
             .env("SSH_ASKPASS_REQUIRE", "force")
@@ -309,6 +317,56 @@ pub fn generate(n: &NewSshKey) -> R<SshKey> {
         return Err(friendly(&out));
     }
     keys()?.into_iter().find(|k| Path::new(&k.path) == pub_path).ok_or_else(|| "Key created but couldn't be read back.".into())
+}
+
+/// Pulls the resident SSH keys stored on the Pico into ~/.ssh (`ssh-keygen -K`).
+/// Existing files are never overwritten. Returns the newly added keys.
+pub fn recover(pin: Option<&str>) -> R<Vec<SshKey>> {
+    let (kg, problem) = keygen();
+    let kg = kg.ok_or(problem.unwrap_or_default())?;
+    // -K writes into the current directory, so run it in a scratch dir and move files over.
+    let tmp = std::env::temp_dir().join(format!("pkm-recover-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    let result = (|| {
+        let args = vec!["-K".to_string(), "-N".into(), String::new()];
+        let (ok, out) = run_openssh_in(&kg, &args, pin, Duration::from_secs(60), Some(&tmp))?;
+        let dir = ssh_dir()?;
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let mut added = vec![];
+        let mut skipped = 0;
+        for e in std::fs::read_dir(&tmp).map_err(|e| e.to_string())?.flatten() {
+            let target = dir.join(e.file_name());
+            if target.exists() {
+                skipped += 1;
+                continue;
+            }
+            std::fs::rename(e.path(), &target).or_else(|_| std::fs::copy(e.path(), &target).map(|_| ())).map_err(|e| e.to_string())?;
+            #[cfg(unix)]
+            if target.extension().is_none() {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600));
+            }
+            if target.extension().is_some_and(|x| x == "pub") {
+                added.push(target);
+            }
+        }
+        if !ok && added.is_empty() && skipped == 0 {
+            let l = out.to_lowercase();
+            return Err(if l.contains("no keys") || l.contains("no resident") || l.contains("no credentials") {
+                "No SSH keys are stored on the Pico. Create one with \"Store on the key\" turned on.".into()
+            } else {
+                friendly(&out)
+            });
+        }
+        let added_keys: Vec<SshKey> = keys()?.into_iter().filter(|k| added.iter().any(|a| Path::new(&k.path) == a)).collect();
+        if added_keys.is_empty() && skipped > 0 {
+            return Err("All keys stored on the Pico are already in ~/.ssh.".into());
+        }
+        Ok(added_keys)
+    })();
+    let _ = std::fs::remove_dir_all(&tmp);
+    result
 }
 
 // ---------- git ----------

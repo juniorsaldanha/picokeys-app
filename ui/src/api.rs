@@ -232,3 +232,11 @@ pub async fn ssh_test(host: &str, key: &str, pin: Option<&str>) -> Result<String
 pub async fn ssh_install_openssh() -> Result<String, String> {
     call("ssh_install_openssh", NONE).await
 }
+#[derive(Serialize)]
+struct PinArgs<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pin: Option<&'a str>,
+}
+pub async fn ssh_recover(pin: Option<&str>) -> Result<Vec<types::SshKey>, String> {
+    call("ssh_recover", PinArgs { pin }).await
+}
