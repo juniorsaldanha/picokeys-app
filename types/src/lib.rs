@@ -506,3 +506,31 @@ pub struct RecoveryFile {
     pub path: String,
     pub size: u64,
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct PgpKey {
+    /// "Signature", "Encryption" or "Authentication"
+    pub slot: String,
+    /// Hex, None when the slot is empty.
+    pub fingerprint: Option<String>,
+    /// Unix seconds.
+    pub created: Option<u32>,
+    /// e.g. "EdDSA Ed25519", "RSA 4096"
+    pub algorithm: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct PgpStatus {
+    pub version: String,
+    pub serial: String,
+    pub name: Option<String>,
+    pub language: Option<String>,
+    pub url: Option<String>,
+    pub signatures: u32,
+    pub user_pin_tries: u8,
+    pub reset_code_tries: u8,
+    pub admin_pin_tries: u8,
+    /// PINs are hashed client-side (KDF-DO); the app then leaves PIN changes to gpg.
+    pub kdf: bool,
+    pub keys: Vec<PgpKey>,
+}

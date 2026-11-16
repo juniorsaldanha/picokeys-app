@@ -9,6 +9,7 @@ mod migrate;
 mod firmware;
 mod oath;
 mod otp;
+mod pgp;
 mod pico;
 mod recovery;
 mod ssh;
@@ -148,6 +149,34 @@ async fn recovery_export(app: tauri::AppHandle, path: String, understood: bool) 
     let Some(dest) = dest.and_then(|d| d.into_path().ok()) else { return Ok(None) };
     recovery::export(&path, &dest)?;
     Ok(Some(dest.display().to_string()))
+}
+
+#[tauri::command]
+async fn pgp_status() -> Result<types::PgpStatus, String> {
+    blocking(pgp::status).await
+}
+
+#[tauri::command]
+async fn pgp_change_pin(admin: bool, old: String, new: String) -> Result<(), String> {
+    blocking(move || pgp::change_pin(admin, &old, &new)).await
+}
+
+#[tauri::command]
+async fn pgp_reset_pin(admin_pin: String, new: String) -> Result<(), String> {
+    blocking(move || pgp::reset_pin(&admin_pin, &new)).await
+}
+
+#[tauri::command]
+async fn pgp_set_cardholder(admin_pin: String, name: String, url: String) -> Result<(), String> {
+    blocking(move || pgp::set_cardholder(&admin_pin, &name, &url)).await
+}
+
+#[tauri::command]
+async fn pgp_factory_reset(admin_pin: Option<String>, confirm: String) -> Result<(), String> {
+    if confirm != "RESET OPENPGP" {
+        return Err("Confirmation phrase didn't match.".into());
+    }
+    blocking(move || pgp::factory_reset(admin_pin.as_deref())).await
 }
 
 #[tauri::command]
@@ -334,6 +363,11 @@ fn main() {
             pico_info, write_phy, fido_reset,
             fido_policy,
             pico_time,
+            pgp_status,
+            pgp_change_pin,
+            pgp_reset_pin,
+            pgp_set_cardholder,
+            pgp_factory_reset,
             recovery_files,
             recovery_export,
             agent_status,

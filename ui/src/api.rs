@@ -351,3 +351,44 @@ struct ExportArgs<'a> {
 pub async fn recovery_export(path: &str, understood: bool) -> Result<Option<String>, String> {
     call("recovery_export", ExportArgs { path, understood }).await
 }
+
+pub async fn pgp_status() -> Result<types::PgpStatus, String> {
+    call("pgp_status", NONE).await
+}
+#[derive(Serialize)]
+struct PgpPinArgs<'a> {
+    admin: bool,
+    old: &'a str,
+    new: &'a str,
+}
+pub async fn pgp_change_pin(admin: bool, old: &str, new: &str) -> Result<(), String> {
+    call("pgp_change_pin", PgpPinArgs { admin, old, new }).await
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PgpResetPinArgs<'a> {
+    admin_pin: &'a str,
+    new: &'a str,
+}
+pub async fn pgp_reset_pin(admin_pin: &str, new: &str) -> Result<(), String> {
+    call("pgp_reset_pin", PgpResetPinArgs { admin_pin, new }).await
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PgpHolderArgs<'a> {
+    admin_pin: &'a str,
+    name: &'a str,
+    url: &'a str,
+}
+pub async fn pgp_set_cardholder(admin_pin: &str, name: &str, url: &str) -> Result<(), String> {
+    call("pgp_set_cardholder", PgpHolderArgs { admin_pin, name, url }).await
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PgpResetArgs<'a> {
+    admin_pin: Option<&'a str>,
+    confirm: &'a str,
+}
+pub async fn pgp_factory_reset(admin_pin: Option<&str>, confirm: &str) -> Result<(), String> {
+    call("pgp_factory_reset", PgpResetArgs { admin_pin, confirm }).await
+}
