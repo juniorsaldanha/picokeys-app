@@ -10,6 +10,7 @@ mod firmware;
 mod oath;
 mod otp;
 mod pico;
+mod recovery;
 mod ssh;
 
 use std::sync::Mutex;
@@ -125,6 +126,28 @@ async fn agent_set(running: bool, pin: Option<String>) -> Result<AgentStatus, St
         agent::set_pin(None);
     }
     agent::status()
+}
+
+#[tauri::command]
+async fn recovery_files() -> Result<Vec<types::RecoveryFile>, String> {
+    recovery::files()
+}
+
+/// Opens a "Save as" dialog and copies the file there. `understood` is the user's explicit
+/// acknowledgement in the UI; the backend refuses without it. Ok(None) = cancelled.
+#[tauri::command]
+async fn recovery_export(app: tauri::AppHandle, path: String, understood: bool) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    if !understood {
+        return Err("Confirm that you understand what this file is first.".into());
+    }
+    let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let dest = tauri::async_runtime::spawn_blocking(move || app.dialog().file().set_file_name(name).blocking_save_file())
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some(dest) = dest.and_then(|d| d.into_path().ok()) else { return Ok(None) };
+    recovery::export(&path, &dest)?;
+    Ok(Some(dest.display().to_string()))
 }
 
 #[tauri::command]
@@ -305,11 +328,14 @@ async fn ssh_archive(old: String) -> Result<String, String> {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             list_devices, fido_info, set_pin, change_pin, list_passkeys, delete_passkey, wink,
             pico_info, write_phy, fido_reset,
             fido_policy,
             pico_time,
+            recovery_files,
+            recovery_export,
             agent_status,
             agent_set,
             pico_sync_time,

@@ -338,3 +338,16 @@ struct AgentArgs<'a> {
 pub async fn agent_set(running: bool, pin: Option<&str>) -> Result<types::AgentStatus, String> {
     call("agent_set", AgentArgs { running, pin }).await
 }
+
+pub async fn recovery_files() -> Result<Vec<types::RecoveryFile>, String> {
+    call("recovery_files", NONE).await
+}
+#[derive(Serialize)]
+struct ExportArgs<'a> {
+    path: &'a str,
+    understood: bool,
+}
+/// Save-as dialog; Ok(None) when the user cancels.
+pub async fn recovery_export(path: &str, understood: bool) -> Result<Option<String>, String> {
+    call("recovery_export", ExportArgs { path, understood }).await
+}

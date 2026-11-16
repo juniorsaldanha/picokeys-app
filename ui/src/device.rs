@@ -33,6 +33,7 @@ pub fn DevicePage() -> Element {
                 Skeleton { class: "mt-4 h-96 rounded-xl" }
             },
         }
+        RecoveryCard {}
         FactoryReset {}
     }
 }
@@ -408,6 +409,64 @@ fn FactoryReset() -> Element {
                 match status() {
                     Some(Ok(())) => rsx! { p { class: "mt-3 text-sm text-success", "Key reset. Set a new PIN to manage passkeys." } },
                     Some(Err(e)) => rsx! { p { class: "mt-3 text-sm text-destructive", "{e}" } },
+                    None => rsx! {},
+                }
+            }
+        }
+    }
+}
+
+/// Secure-boot signing key + flash backups: export only after an explicit acknowledgement.
+#[component]
+fn RecoveryCard() -> Element {
+    let files = use_resource(api::recovery_files);
+    let mut understood = use_signal(|| false);
+    let mut msg = use_signal(|| None::<Result<String, String>>);
+    let Some(Ok(files)) = files.read().clone() else { return rsx! {} };
+    if files.is_empty() {
+        return rsx! {};
+    }
+    let save = move |path: String| async move {
+        msg.set(match api::recovery_export(&path, understood()).await {
+            Ok(Some(p)) => Some(Ok(format!("Saved to {p}"))),
+            Ok(None) => None,
+            Err(e) => Some(Err(e)),
+        });
+    };
+    rsx! {
+        Card {
+            CardHeader {
+                CardTitle { "Recovery files" }
+                CardDescription { "Kept on this computer in ~/.pico-key-manager. Save copies somewhere safe." }
+            }
+            CardContent { class: "flex flex-col gap-3 text-sm",
+                div { class: "flex flex-col gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3",
+                    p { class: "font-medium text-destructive", "These files are critical. Read this before saving them." }
+                    ul { class: "flex list-disc flex-col gap-1 pl-5 text-xs",
+                        li { b { "Signing key: " } "secure boot is permanently on for your key and trusts this key. Without it you can't sign a new bootloader for your key (firmware updates from this app keep the current one), and anyone who has it can make firmware your key will boot. Keep it in a password manager (e.g. a 1Password document) or offline storage. Never share it, email it or put it in a repository." }
+                        li { b { "Flash backup: " } "a copy of the key's firmware and data (passkeys, PIN, OATH, settings) taken before recovery. It only restores onto this same chip, and restoring rolls the key back to that moment. Treat it as private." }
+                        li { "If this computer dies and you have no copies, nothing can recover them." }
+                    }
+                }
+                label { class: "flex cursor-pointer items-start gap-2",
+                    input { r#type: "checkbox", class: "mt-0.5 size-4 accent-primary", checked: understood(), onchange: move |e: FormEvent| understood.set(e.checked()) }
+                    span { "I understand these files are critical and private, and I'll keep my copies somewhere safe." }
+                }
+                for f in files {
+                    div { key: "{f.path}", class: "flex items-center justify-between gap-3 rounded-lg bg-muted px-3 py-2",
+                        div { class: "min-w-0",
+                            p { class: "font-medium", if f.kind == "signing-key" { "Secure boot signing key" } else { "Flash backup" } }
+                            p { class: "truncate font-mono text-xs text-muted-foreground", "{f.name} · {kib(f.size as u32)}" }
+                        }
+                        Button { variant: ButtonVariant::Outline, size: ButtonSize::Sm, disabled: !understood(),
+                            onclick: { let p = f.path.clone(); move |_| { spawn(save(p.clone())); } },
+                            Save {} "Save…"
+                        }
+                    }
+                }
+                match msg() {
+                    Some(Ok(m)) => rsx! { p { class: "text-success", "{m}" } },
+                    Some(Err(e)) => rsx! { p { class: "text-destructive", "{e}" } },
                     None => rsx! {},
                 }
             }

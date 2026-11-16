@@ -497,3 +497,12 @@ pub struct AgentStatus {
     pub keys: Vec<String>,
     pub has_pin: bool,
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct RecoveryFile {
+    /// "signing-key" or "flash-backup"
+    pub kind: String,
+    pub name: String,
+    pub path: String,
+    pub size: u64,
+}
