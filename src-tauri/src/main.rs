@@ -1,6 +1,7 @@
 // Prevents an extra console window on Windows in release.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod agent;
 mod blobs;
 mod ctap;
 mod fido;
@@ -12,12 +13,12 @@ mod pico;
 mod ssh;
 
 use std::sync::Mutex;
-use types::{Board, FidoPolicy, LargeBlobs, LegacyKey, GitSetup, GitSigning, NewSshKey, SshEnv, SshKey, Device, FlashProgress, FwRelease, FidoInfo, NewOath, NewOtp, OathAccount, OtpSlot, Passkey, Phy, PicoInfo};
+use types::{AgentStatus, Board, FidoPolicy, LargeBlobs, LegacyKey, GitSetup, GitSigning, NewSshKey, SshEnv, SshKey, Device, FlashProgress, FwRelease, FidoInfo, NewOath, NewOtp, OathAccount, OtpSlot, Passkey, Phy, PicoInfo};
 
 /// One device conversation at a time: Pico firmware wedges if HID (CTAP) and
 /// CCID (rescue) requests overlap.
 // ponytail: one global lock for all keys; per-device locks if multi-key use needs parallelism.
-static DEVICE: Mutex<()> = Mutex::new(());
+pub(crate) static DEVICE: Mutex<()> = Mutex::new(());
 
 /// Device I/O blocks (and may wait for touch), so keep it off the UI/async threads.
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
@@ -115,6 +116,24 @@ async fn pico_secure_boot(bootkey: u8, lock: bool, confirm: String) -> Result<()
         return Err("Confirmation phrase didn't match.".into());
     }
     blocking(move || pico::enable_secure_boot(bootkey, lock)).await
+}
+
+#[tauri::command]
+async fn agent_status() -> Result<AgentStatus, String> {
+    agent::status()
+}
+
+/// Start (with an optional PIN for keys that need it) or stop the built-in ssh-agent.
+#[tauri::command]
+async fn agent_set(running: bool, pin: Option<String>) -> Result<AgentStatus, String> {
+    if running {
+        agent::set_pin(pin);
+        agent::start()?;
+    } else {
+        agent::stop()?;
+        agent::set_pin(None);
+    }
+    agent::status()
 }
 
 #[tauri::command]
@@ -300,6 +319,8 @@ fn main() {
             pico_info, write_phy, fido_reset,
             fido_policy,
             pico_time,
+            agent_status,
+            agent_set,
             pico_secure_boot,
             pico_sync_time,
             save_text,

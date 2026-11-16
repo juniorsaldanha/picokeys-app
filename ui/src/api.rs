@@ -337,3 +337,15 @@ struct SecureArgs<'a> {
 pub async fn pico_secure_boot(bootkey: u8, lock: bool, confirm: &str) -> Result<(), String> {
     call("pico_secure_boot", SecureArgs { bootkey, lock, confirm }).await
 }
+
+pub async fn agent_status() -> Result<types::AgentStatus, String> {
+    call("agent_status", NONE).await
+}
+#[derive(Serialize)]
+struct AgentArgs<'a> {
+    running: bool,
+    pin: Option<&'a str>,
+}
+pub async fn agent_set(running: bool, pin: Option<&str>) -> Result<types::AgentStatus, String> {
+    call("agent_set", AgentArgs { running, pin }).await
+}

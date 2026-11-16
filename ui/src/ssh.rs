@@ -40,6 +40,7 @@ pub fn SshPage() -> Element {
                 }
                 Hosts { keys: k.clone() }
             }
+            AgentCard {}
             if e.keygen.is_some() {
                 crate::migrate::MigrateCard { pico_keys: k.clone(), on_change: move |_| keys.restart() }
             }
@@ -555,6 +556,65 @@ fn Hosts(keys: Vec<SshKey>) -> Element {
                     if busy() == Some("test") { Spinner {} } else { Plug {} }
                     "Test connection"
                 }
+            }
+        }
+    }
+}
+
+/// Built-in ssh-agent: lets any ssh (even Apple's) use the Pico keys.
+#[component]
+fn AgentCard() -> Element {
+    let st = use_context::<AppState>();
+    let mut status = use_resource(api::agent_status);
+    let mut pin = use_signal(move || st.pin.peek().clone().unwrap_or_default());
+    let mut err = use_signal(|| None::<String>);
+    let mut busy = use_signal(|| false);
+    let Some(Ok(s)) = status.read().clone() else { return rsx! {} };
+    if !s.supported {
+        return rsx! {};
+    }
+    let toggle = move |on: bool| async move {
+        busy.set(true);
+        let p = pin.peek().clone();
+        match api::agent_set(on, Some(p.as_str()).filter(|p| !p.is_empty())).await {
+            Ok(_) => err.set(None),
+            Err(e) => err.set(Some(e)),
+        }
+        status.restart();
+        busy.set(false);
+    };
+    let export = format!("export SSH_AUTH_SOCK=\"{}\"", s.socket);
+    rsx! {
+        Card {
+            CardHeader {
+                div { class: "flex items-start justify-between gap-3",
+                    div {
+                        CardTitle { "Built-in SSH agent" }
+                        CardDescription { "Signs with your Pico keys for any ssh client, including Apple's, without Homebrew. Runs while this app is open." }
+                    }
+                    Switch { checked: s.running, disabled: busy(), aria_label: "Run agent", onchange: move |v: bool| { spawn(toggle(v)); } }
+                }
+            }
+            CardContent { class: "flex flex-col gap-3 text-sm",
+                if !s.running {
+                    div { class: "flex max-w-xs flex-col gap-1.5",
+                        Label { "Key PIN (needed when \"Always require PIN\" is on)" }
+                        Input { r#type: InputType::Password, value: pin(), oninput: move |e: FormEvent| pin.set(e.value()) }
+                    }
+                } else {
+                    p { class: "text-muted-foreground",
+                        if s.keys.is_empty() { "Running, but there are no Pico SSH keys in ~/.ssh yet." } else { "Offering {s.keys.len()} key(s): {s.keys.join(\", \")}" }
+                    }
+                    p { "Use it in a terminal:" }
+                    div { class: "flex items-center gap-2",
+                        code { class: "selectable flex-1 truncate rounded-md bg-muted px-2.5 py-2 font-mono text-xs", "{export}" }
+                        CopyButton { text: export.clone() }
+                    }
+                    p { class: "text-xs text-muted-foreground",
+                        "Or per host in ~/.ssh/config: IdentityAgent {s.socket}. Your 1Password agent stays the default everywhere else."
+                    }
+                }
+                if let Some(e) = err() { p { class: "text-destructive", "{e}" } }
             }
         }
     }

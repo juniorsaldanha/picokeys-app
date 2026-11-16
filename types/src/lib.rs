@@ -486,3 +486,14 @@ pub struct BlobEntry {
     /// First 64 bytes of the plaintext, hex.
     pub hex: String,
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct AgentStatus {
+    /// false on Windows.
+    pub supported: bool,
+    pub running: bool,
+    pub socket: String,
+    /// "type comment" of each security-key SSH key the agent offers.
+    pub keys: Vec<String>,
+    pub has_pin: bool,
+}
