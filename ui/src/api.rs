@@ -190,6 +190,16 @@ pub async fn fw_flash_file(path: &str, board: types::Board) -> Result<(), String
     guarded("fw_flash_file", FlashFileArgs { path, board }).await
 }
 #[derive(Serialize)]
+struct BoardArgs {
+    board: types::Board,
+}
+pub async fn fw_backup(board: types::Board) -> Result<String, String> {
+    guarded("fw_backup", BoardArgs { board }).await
+}
+pub async fn fw_restore(path: &str, board: types::Board) -> Result<(), String> {
+    guarded("fw_restore", FlashFileArgs { path, board }).await
+}
+#[derive(Serialize)]
 struct BootLogArgs {
     seconds: u64,
 }

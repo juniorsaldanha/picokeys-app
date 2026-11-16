@@ -2,7 +2,7 @@
 use crate::api;
 use crate::pages::{ErrorBox, PageHeader, humanize};
 use dioxus::prelude::*;
-use icons::{CircleCheck, Download, ExternalLink, FileUp, ScrollText, TriangleAlert, Zap};
+use icons::{CircleCheck, Download, ExternalLink, FileUp, Save, ScrollText, TriangleAlert, Zap};
 use types::{Board, FlashProgress, FwAsset, FwRelease};
 
 use crate::ui::alert::{Alert, AlertDescription, AlertTitle, AlertVariant};
@@ -137,6 +137,10 @@ pub fn FirmwarePage() -> Element {
             }
         }
 
+        if let Some(bd) = b.filter(|bd| bd.is_esp()) {
+            FlashBackup { board: bd, busy }
+        }
+
         if let Some(bd) = b {
             Warnings { board: bd, switching, from: cur_product.map(|c| c.0).unwrap_or_default(), to: product_name.to_string() }
         }
@@ -225,6 +229,92 @@ pub fn FirmwarePage() -> Element {
         if let Some(bd) = b {
             CustomFirmware { board: bd }
             if bd.is_esp() { BootLog {} }
+        }
+    }
+}
+
+/// Made by this app (flash-<board>-<mac>-<date>-<time>.bin), so the backend can match it to a chip.
+fn restorable(name: &str) -> bool {
+    name.split('-').nth(2).is_some_and(|m| m.len() == 12 && m.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// Whole-flash backup of an ESP32 key into the recovery folder, and restoring one onto the same chip.
+#[component]
+fn FlashBackup(board: Board, busy: bool) -> Element {
+    let mut files = use_resource(api::recovery_files);
+    let mut state = use_signal(|| Flash::Idle);
+    let mut armed = use_signal(|| None::<String>);
+    let running = busy || matches!(state(), Flash::Running(_));
+    let backup = move |_| async move {
+        armed.set(None);
+        state.set(Flash::Running(FlashProgress { stage: "Starting".into(), ..Default::default() }));
+        let _listener = api::on_flash_progress(move |p| state.set(Flash::Running(p)));
+        state.set(match api::fw_backup(board).await {
+            Ok(p) => Flash::Done(format!("Saved to {p}. The key is restarting.")),
+            Err(e) => Flash::Failed(humanize(&e)),
+        });
+        files.restart();
+    };
+    let restore = move |path: String| async move {
+        armed.set(None);
+        state.set(Flash::Running(FlashProgress { stage: "Starting".into(), ..Default::default() }));
+        let _listener = api::on_flash_progress(move |p| state.set(Flash::Running(p)));
+        state.set(match api::fw_restore(&path, board).await {
+            Ok(()) => Flash::Done("Restored. The key is restarting with the firmware and data from that backup.".into()),
+            Err(e) => Flash::Failed(humanize(&e)),
+        });
+    };
+    let mut backups: Vec<types::RecoveryFile> =
+        files.read().as_ref().and_then(|r| r.as_ref().ok()).map(|f| f.iter().filter(|f| f.kind == "flash-backup").cloned().collect()).unwrap_or_default();
+    backups.reverse(); // newest first (names end in the date)
+    rsx! {
+        Card { class: "mb-6",
+            CardHeader {
+                div { class: "flex items-start justify-between gap-3",
+                    div {
+                        CardTitle { "Flash backup" }
+                        CardDescription {
+                            "Copies the key's whole flash (bootloader, firmware, passkeys, PIN, OATH, OpenPGP keys, settings) to ~/.pico-key-manager/recovery, checked against the chip's own checksum. "
+                            "Take one before installing firmware. Restoring puts the key back exactly as it was then, and only works on the same chip."
+                        }
+                    }
+                    Button { variant: ButtonVariant::Outline, size: ButtonSize::Sm, disabled: running, onclick: backup,
+                        if matches!(state(), Flash::Running(_)) { Spinner {} } else { Save {} }
+                        "Back up now"
+                    }
+                }
+            }
+            CardContent { class: "flex flex-col gap-3 text-sm",
+                p { class: "text-xs text-muted-foreground",
+                    "The file holds every secret on the key and stays on this computer. Keep a copy somewhere safe with Save… under Recovery files on the Device page. The key needs to be in download mode, as for flashing."
+                }
+                for f in backups.into_iter().take(5) {
+                    div { key: "{f.path}", class: "flex items-center gap-3 rounded-lg bg-muted px-3 py-2",
+                        span { class: "min-w-0 flex-1 truncate font-mono text-xs", title: "{f.path}", "{f.name} · {f.size / 1024} KB" }
+                        if !restorable(&f.name) {
+                            span { class: "text-xs text-muted-foreground", "Made outside the app" }
+                        } else if armed() == Some(f.path.clone()) {
+                            span { class: "text-xs text-warning", "Rolls the key back to this backup; anything newer is lost." }
+                            Button { variant: ButtonVariant::Ghost, size: ButtonSize::Sm, onclick: move |_| armed.set(None), "Cancel" }
+                            Button { variant: ButtonVariant::Destructive, size: ButtonSize::Sm, disabled: running,
+                                onclick: { let p = f.path.clone(); move |_| { spawn(restore(p.clone())); } },
+                                Zap {} "Restore now"
+                            }
+                        } else {
+                            Button { variant: ButtonVariant::Outline, size: ButtonSize::Sm, disabled: running,
+                                onclick: { let p = f.path.clone(); move |_| armed.set(Some(p.clone())) },
+                                "Restore…"
+                            }
+                        }
+                    }
+                }
+                match state() {
+                    Flash::Running(p) => rsx! { FlashStatus { p } },
+                    Flash::Done(msg) => rsx! { Alert { variant: AlertVariant::Success, CircleCheck {} AlertTitle { "Done" } AlertDescription { "{msg}" } } },
+                    Flash::Failed(e) => rsx! { ErrorBox { title: "Backup or restore failed", msg: e } },
+                    Flash::Idle => rsx! {},
+                }
+            }
         }
     }
 }

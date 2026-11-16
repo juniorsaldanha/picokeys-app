@@ -40,12 +40,26 @@ pub fn export(src: &str, dest: &Path) -> R<()> {
         return Err("That isn't one of the recovery files.".into());
     }
     std::fs::copy(src, dest).map_err(|e| format!("Couldn't save: {e}"))?;
+    private(dest);
+    Ok(())
+}
+
+/// Owner-only access (0600 for files, 0700 for folders).
+pub fn private(p: &Path) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o600));
+        let mode = if p.is_dir() { 0o700 } else { 0o600 };
+        let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode));
     }
-    Ok(())
+}
+
+/// Where flash backups go (created owner-only); `files()` lists them from there.
+pub fn backup_dir() -> R<PathBuf> {
+    let d = root()?.join("recovery");
+    std::fs::create_dir_all(&d).map_err(|e| format!("Couldn't create {}: {e}", d.display()))?;
+    private(&d);
+    Ok(d)
 }
 
 #[cfg(test)]

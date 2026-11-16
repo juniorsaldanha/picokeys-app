@@ -532,6 +532,34 @@ async fn fw_flash_file(app: tauri::AppHandle, path: String, board: Board) -> Res
     .await)
 }
 
+/// Whole-flash backup of an ESP32 key into ~/.pico-key-manager/recovery. Returns the file path.
+#[tauri::command]
+async fn fw_backup(app: tauri::AppHandle, board: Board) -> Result<String, String> {
+    audit::log("fw_backup", board.label(), async move {
+        admin::require()?;
+        use tauri::Emitter;
+        blocking(move || firmware::backup_esp(board, &mut |p: FlashProgress| {
+            let _ = app.emit("flash-progress", p);
+        }))
+        .await
+    }
+    .await)
+}
+
+#[tauri::command]
+async fn fw_restore(app: tauri::AppHandle, path: String, board: Board) -> Result<(), String> {
+    let detail = path.clone();
+    audit::log("fw_restore", &detail, async move {
+        admin::require()?;
+        use tauri::Emitter;
+        blocking(move || firmware::restore_esp(&path, board, &mut |p: FlashProgress| {
+            let _ = app.emit("flash-progress", p);
+        }))
+        .await
+    }
+    .await)
+}
+
 #[tauri::command]
 async fn fw_boot_log(seconds: u64) -> Result<String, String> {
     blocking(move || firmware::boot_log(seconds)).await
@@ -681,7 +709,7 @@ fn main() {
             large_blobs,
             large_blob_delete, oath_list, oath_calculate, oath_add, oath_delete,
             oath_unlock, oath_lock, oath_protected, oath_set_password, oath_rename,
-            otp_status, otp_configure, otp_delete, otp_swap, random_hex, fw_releases, fw_flash, fw_pick_file, fw_flash_file, fw_boot_log,
+            otp_status, otp_configure, otp_delete, otp_swap, random_hex, fw_releases, fw_flash, fw_pick_file, fw_flash_file, fw_backup, fw_restore, fw_boot_log,
             ssh_env, ssh_install_openssh, ssh_keys, ssh_remove, ssh_generate, ssh_recover, ssh_git_setup, ssh_add_host, ssh_test,
             ssh_inventory, ssh_authorize, ssh_check, ssh_switch_config, ssh_archive
         ])
