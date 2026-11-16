@@ -2,10 +2,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod fido;
+mod oath;
 mod pico;
 
 use std::sync::Mutex;
-use types::{Device, FidoInfo, Passkey, Phy, PicoInfo};
+use types::{Device, FidoInfo, NewOath, OathAccount, Passkey, Phy, PicoInfo};
 
 /// One device conversation at a time: Pico firmware wedges if HID (CTAP) and
 /// CCID (rescue) requests overlap.
@@ -73,11 +74,31 @@ async fn fido_reset(path: String) -> Result<(), String> {
     blocking(move || pico::fido_reset(&path)).await
 }
 
+#[tauri::command]
+async fn oath_list() -> Result<Vec<OathAccount>, String> {
+    blocking(oath::list).await
+}
+
+#[tauri::command]
+async fn oath_calculate(name: String) -> Result<String, String> {
+    blocking(move || oath::calculate(&name)).await
+}
+
+#[tauri::command]
+async fn oath_add(account: NewOath) -> Result<(), String> {
+    blocking(move || oath::add(&account)).await
+}
+
+#[tauri::command]
+async fn oath_delete(name: String) -> Result<(), String> {
+    blocking(move || oath::delete(&name)).await
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             list_devices, fido_info, set_pin, change_pin, list_passkeys, delete_passkey, wink,
-            pico_info, write_phy, fido_reset
+            pico_info, write_phy, fido_reset, oath_list, oath_calculate, oath_add, oath_delete
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

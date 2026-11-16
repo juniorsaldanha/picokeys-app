@@ -22,11 +22,11 @@ const TAG_CURVES: u8 = 0xA;
 const TAG_USB_ITF: u8 = 0xB;
 const TAG_LED_DRIVER: u8 = 0xC;
 
-struct Card(pcsc::Card);
+pub(crate) struct Card(pcsc::Card);
 
 impl Card {
     /// ponytail: picks the first reader named like a Pico Key; map HID path ↔ reader when multi-key matters.
-    fn open() -> R<Self> {
+    pub(crate) fn open() -> R<Self> {
         let ctx = Context::establish(Scope::User).map_err(|e| format!("PC/SC unavailable: {e}"))?;
         let mut buf = vec![0u8; ctx.list_readers_len().map_err(|e| e.to_string())?];
         let readers: Vec<CString> = ctx.list_readers(&mut buf).map_err(|e| e.to_string())?.map(|r| r.to_owned()).collect();
@@ -38,27 +38,55 @@ impl Card {
         Ok(Card(card))
     }
 
-    fn apdu(&self, cmd: &[u8]) -> R<Vec<u8>> {
+    fn transmit(&self, cmd: &[u8]) -> R<(Vec<u8>, [u8; 2])> {
         let mut out = [0u8; pcsc::MAX_BUFFER_SIZE_EXTENDED];
         let rsp = self.0.transmit(cmd, &mut out).map_err(|e| e.to_string())?;
-        let (data, sw) = rsp.split_at(rsp.len().saturating_sub(2));
-        match sw {
-            [0x90, 0x00] => Ok(data.to_vec()),
-            [0x69, 0x85] => Err("Not confirmed on the key (touch the button when it blinks).".into()),
-            [a, b] => Err(format!("Key returned status {a:02X}{b:02X}")),
-            _ => Err("Malformed response".into()),
+        if rsp.len() < 2 {
+            return Err("Malformed response".into());
         }
+        let (data, sw) = rsp.split_at(rsp.len() - 2);
+        Ok((data.to_vec(), [sw[0], sw[1]]))
+    }
+
+    pub(crate) fn apdu(&self, cmd: &[u8]) -> R<Vec<u8>> {
+        let (data, sw) = self.transmit(cmd)?;
+        check_sw(sw).map(|_| data)
+    }
+
+    /// Follows `61xx` (more data) by sending `INS remaining` until 9000 (YKOATH-style chaining).
+    pub(crate) fn apdu_chained(&self, cmd: &[u8], remaining_ins: u8) -> R<Vec<u8>> {
+        let (mut all, mut sw) = self.transmit(cmd)?;
+        while sw[0] == 0x61 {
+            let (more, next) = self.transmit(&[0x00, remaining_ins, 0x00, 0x00, 0x00])?;
+            all.extend(more);
+            sw = next;
+        }
+        check_sw(sw).map(|_| all)
     }
 
     fn select(&self) -> R<Vec<u8>> {
-        let mut cmd = vec![0x00, 0xA4, 0x04, 0x00, RESCUE_AID.len() as u8];
-        cmd.extend_from_slice(&RESCUE_AID);
+        self.select_aid(&RESCUE_AID)
+    }
+
+    pub(crate) fn select_aid(&self, aid: &[u8]) -> R<Vec<u8>> {
+        let mut cmd = vec![0x00, 0xA4, 0x04, 0x00, aid.len() as u8];
+        cmd.extend_from_slice(aid);
         cmd.push(0x00);
         self.apdu(&cmd)
     }
 
     fn read(&self, p1: u8) -> R<Vec<u8>> {
         self.apdu(&[0x80, 0x1E, p1, 0x00, 0x00])
+    }
+}
+
+fn check_sw(sw: [u8; 2]) -> R<()> {
+    match sw {
+        [0x90, 0x00] => Ok(()),
+        [0x69, 0x85] => Err("Not confirmed on the key (touch the button when it blinks).".into()),
+        [0x69, 0x82] => Err("The key is locked with a password.".into()),
+        [0x6A, 0x84] => Err("The key is full.".into()),
+        [a, b] => Err(format!("Key returned status {a:02X}{b:02X}")),
     }
 }
 

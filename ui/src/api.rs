@@ -86,3 +86,40 @@ pub async fn write_phy(phy: &types::Phy) -> Result<(), String> {
 pub async fn fido_reset(path: &str) -> Result<(), String> {
     call("fido_reset", Args { path: Some(path), ..NONE }).await
 }
+
+#[derive(Serialize)]
+struct NameArgs<'a> {
+    name: &'a str,
+}
+pub async fn oath_list() -> Result<Vec<types::OathAccount>, String> {
+    call("oath_list", NONE).await
+}
+pub async fn oath_calculate(name: &str) -> Result<String, String> {
+    call("oath_calculate", NameArgs { name }).await
+}
+pub async fn oath_delete(name: &str) -> Result<(), String> {
+    call("oath_delete", NameArgs { name }).await
+}
+#[derive(Serialize)]
+struct AddArgs<'a> {
+    account: &'a types::NewOath,
+}
+pub async fn oath_add(account: &types::NewOath) -> Result<(), String> {
+    call("oath_add", AddArgs { account }).await
+}
+
+/// Seconds since the Unix epoch (JS clock).
+pub fn now_secs() -> f64 {
+    js_sys::Date::now() / 1000.0
+}
+
+pub fn copy_text(text: &str) {
+    use js_sys::{Function, Reflect};
+    // navigator.clipboard.writeText(text), without string-building JS
+    let clip = Reflect::get(&js_sys::global(), &"navigator".into()).and_then(|n| Reflect::get(&n, &"clipboard".into()));
+    if let Ok(clip) = clip {
+        if let Ok(f) = Reflect::get(&clip, &"writeText".into()) {
+            let _ = f.unchecked_into::<Function>().call1(&clip, &text.into());
+        }
+    }
+}

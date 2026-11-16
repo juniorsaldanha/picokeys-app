@@ -97,3 +97,154 @@ impl Phy {
 
     pub const CURVE_SECP256K1: u32 = 0x8;
 }
+
+/// One OATH (authenticator) account stored on the key.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct OathAccount {
+    /// Raw on-key name, e.g. "60/GitHub:alice" (period prefix only when != 30).
+    pub name: String,
+    pub issuer: Option<String>,
+    pub account: String,
+    pub hotp: bool,
+    pub algorithm: OathAlg,
+    pub digits: u8,
+    pub period: u32,
+    pub touch: bool,
+    /// Current code; `None` for HOTP / touch accounts until requested.
+    pub code: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]
+pub enum OathAlg {
+    #[default]
+    Sha1,
+    Sha256,
+    Sha512,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct NewOath {
+    pub issuer: String,
+    pub account: String,
+    /// Base32 secret, as shown by websites.
+    pub secret: String,
+    pub hotp: bool,
+    pub algorithm: OathAlg,
+    pub digits: u8,
+    pub period: u32,
+    pub counter: u64,
+    pub touch: bool,
+}
+
+impl Default for NewOath {
+    fn default() -> Self {
+        Self {
+            issuer: String::new(),
+            account: String::new(),
+            secret: String::new(),
+            hotp: false,
+            algorithm: OathAlg::Sha1,
+            digits: 6,
+            period: 30,
+            counter: 0,
+            touch: false,
+        }
+    }
+}
+
+impl NewOath {
+    /// Name stored on the key, YKOATH convention: `[period/]issuer:account`.
+    pub fn key_name(&self) -> String {
+        let base = if self.issuer.is_empty() { self.account.clone() } else { format!("{}:{}", self.issuer, self.account) };
+        if !self.hotp && self.period != 30 { format!("{}/{}", self.period, base) } else { base }
+    }
+
+    /// Parse an `otpauth://totp|hotp/Label?secret=...` link (from a QR code).
+    pub fn from_uri(uri: &str) -> Result<Self, String> {
+        let rest = uri.trim().strip_prefix("otpauth://").ok_or("Not an otpauth:// link")?;
+        let (kind, rest) = rest.split_once('/').ok_or("Missing account label")?;
+        let hotp = match kind.to_ascii_lowercase().as_str() {
+            "totp" => false,
+            "hotp" => true,
+            _ => return Err("Unsupported OTP type".into()),
+        };
+        let (label, query) = rest.split_once('?').unwrap_or((rest, ""));
+        let label = pct_decode(label);
+        let (mut issuer, account) = match label.split_once(':') {
+            Some((i, a)) => (i.trim().to_string(), a.trim().to_string()),
+            None => (String::new(), label.trim().to_string()),
+        };
+        let mut n = NewOath { hotp, account, ..Default::default() };
+        for pair in query.split('&').filter(|p| !p.is_empty()) {
+            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+            let v = pct_decode(v);
+            match k.to_ascii_lowercase().as_str() {
+                "secret" => n.secret = v,
+                "issuer" => issuer = v,
+                "digits" => n.digits = v.parse().map_err(|_| "Bad digits")?,
+                "period" => n.period = v.parse().map_err(|_| "Bad period")?,
+                "counter" => n.counter = v.parse().map_err(|_| "Bad counter")?,
+                "algorithm" => {
+                    n.algorithm = match v.to_ascii_uppercase().as_str() {
+                        "SHA1" => OathAlg::Sha1,
+                        "SHA256" => OathAlg::Sha256,
+                        "SHA512" => OathAlg::Sha512,
+                        _ => return Err("Unsupported algorithm".into()),
+                    }
+                }
+                _ => {}
+            }
+        }
+        n.issuer = issuer;
+        if n.secret.is_empty() {
+            return Err("Link has no secret".into());
+        }
+        Ok(n)
+    }
+}
+
+fn pct_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'%' if i + 2 < b.len() => {
+                let hex = |c: u8| (c as char).to_digit(16);
+                match (hex(b[i + 1]), hex(b[i + 2])) {
+                    (Some(h), Some(l)) => {
+                        out.push((h * 16 + l) as u8);
+                        i += 3;
+                        continue;
+                    }
+                    _ => out.push(b'%'),
+                }
+            }
+            b'+' => out.push(b' '),
+            c => out.push(c),
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn otpauth_parsing() {
+        let n = NewOath::from_uri("otpauth://totp/ACME%20Co:john@example.com?secret=JBSWY3DPEHPK3PXP&issuer=ACME%20Co&algorithm=SHA256&digits=8&period=60").unwrap();
+        assert_eq!((n.issuer.as_str(), n.account.as_str(), n.secret.as_str()), ("ACME Co", "john@example.com", "JBSWY3DPEHPK3PXP"));
+        assert_eq!((n.algorithm, n.digits, n.period, n.hotp), (OathAlg::Sha256, 8, 60, false));
+        assert_eq!(n.key_name(), "60/ACME Co:john@example.com");
+
+        let h = NewOath::from_uri("otpauth://hotp/alice?secret=ABC&counter=5").unwrap();
+        assert!(h.hotp && h.counter == 5 && h.issuer.is_empty());
+        assert_eq!(h.key_name(), "alice");
+
+        assert!(NewOath::from_uri("https://x").is_err());
+        assert!(NewOath::from_uri("otpauth://totp/x?issuer=a").is_err());
+        assert_eq!(pct_decode("a%2"), "a%2"); // truncated escape kept as-is
+    }
+}

@@ -1,7 +1,7 @@
 # Pico Key Manager
 
 A free, GPL-3.0 desktop manager for [pico-keys](https://www.picokeys.com/) devices
-(Pico FIDO first; Pico HSM and Pico OpenPGP planned). Runs on macOS, Linux, and Windows.
+(Pico FIDO first; Pico HSM and Pico OpenPGP planned. Pico-specific features talk to the pico-keys-sdk rescue applet and YKOATH over CCID (PC/SC)). Runs on macOS, Linux, and Windows.
 
 Stack: **Tauri 2** (native shell, Rust backend) + **Dioxus 0.7** (Rust → WASM UI) +
 **[rust-ui](https://rust-ui.com)** components + **Tailwind v4**. The webview renders on the GPU.
@@ -13,6 +13,13 @@ Stack: **Tauri 2** (native shell, Rust backend) + **Dioxus 0.7** (Rust → WASM 
 - PIN: set, change, retries left
 - Passkeys: list, search, delete (unlocked with PIN)
 - Identify key (wink)
+
+## Features (Pico)
+
+- Device: chip, firmware, serial, flash usage, secure boot status
+- Configuration: USB VID/PID and name, interfaces, LED driver/order/GPIO/brightness, button timeout
+- FIDO factory reset
+- Authenticator (OATH): TOTP/HOTP codes, add via otpauth:// link or setup key, touch-required accounts
 
 ## Layout
 
