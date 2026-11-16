@@ -45,13 +45,13 @@ impl<'a> Rd<'a> {
     }
 }
 
-fn put(out: &mut Vec<u8>, b: &[u8]) {
+pub(crate) fn put(out: &mut Vec<u8>, b: &[u8]) {
     out.extend((b.len() as u32).to_be_bytes());
     out.extend_from_slice(b);
 }
 
 /// Unsigned big-endian integer as an SSH mpint.
-fn mpint(out: &mut Vec<u8>, v: &[u8]) {
+pub(crate) fn mpint(out: &mut Vec<u8>, v: &[u8]) {
     let v: Vec<u8> = v.iter().copied().skip_while(|b| *b == 0).collect();
     let mut m = if v.first().is_some_and(|b| b & 0x80 != 0) { vec![0] } else { vec![] };
     m.extend(v);
@@ -142,6 +142,29 @@ pub fn ssh_signature(kind: &str, auth_data: &[u8], sig: &[u8]) -> R<Vec<u8>> {
 static RUNNING: AtomicBool = AtomicBool::new(false);
 /// PIN for keys that need it (alwaysUv / verify-required). Memory only.
 static PIN: Mutex<Option<String>> = Mutex::new(None);
+/// OpenPGP card PIN (PW1). While set, the card's authentication key is offered too. Memory only.
+static PGP_PIN: Mutex<Option<String>> = Mutex::new(None);
+const PGP_COMMENT: &str = "openpgp-card";
+
+fn pgp_pin() -> Option<String> {
+    PGP_PIN.lock().unwrap_or_else(|p| p.into_inner()).clone()
+}
+
+/// Offer the OpenPGP card's authentication key (checks the PIN first), or stop offering it.
+pub fn set_pgp_pin(pin: Option<String>) -> R<()> {
+    let pin = pin.filter(|p| !p.is_empty());
+    if let Some(p) = &pin {
+        crate::pgp::check_pin(p)?;
+    }
+    *PGP_PIN.lock().unwrap_or_else(|p| p.into_inner()) = pin;
+    Ok(())
+}
+
+/// The card key's blob, when it's being offered and the card is there.
+fn pgp_blob() -> Option<Vec<u8>> {
+    pgp_pin()?;
+    crate::pgp::ssh_blob().ok().flatten()
+}
 
 pub fn socket_path() -> R<std::path::PathBuf> {
     Ok(crate::ssh::ssh_dir()?.join("pico-agent.sock"))
@@ -167,8 +190,13 @@ pub fn status() -> R<AgentStatus> {
         supported: cfg!(unix),
         running: RUNNING.load(Ordering::SeqCst),
         socket: socket_path()?.display().to_string(),
-        keys: load_keys().iter().map(|k| format!("{} {}", k.kind.split('@').next().unwrap_or(&k.kind), k.comment)).collect(),
+        keys: load_keys()
+            .iter()
+            .map(|k| format!("{} {}", k.kind.split('@').next().unwrap_or(&k.kind), k.comment))
+            .chain(pgp_blob().and_then(|b| Rd(&b).str()).map(|t| format!("{t} {PGP_COMMENT}")))
+            .collect(),
         has_pin: PIN.lock().map(|p| p.is_some()).unwrap_or(false),
+        pgp: pgp_pin().is_some(),
     })
 }
 
@@ -201,18 +229,35 @@ fn handle(msg: &[u8]) -> Vec<u8> {
     match r.u8() {
         Some(11) => {
             // REQUEST_IDENTITIES
-            let keys = load_keys();
+            let mut ids: Vec<(Vec<u8>, String)> = load_keys().into_iter().map(|k| (k.blob, k.comment)).collect();
+            ids.extend(pgp_blob().map(|b| (b, PGP_COMMENT.to_string())));
             let mut out = vec![12];
-            out.extend((keys.len() as u32).to_be_bytes());
-            for k in keys {
-                put(&mut out, &k.blob);
-                put(&mut out, k.comment.as_bytes());
+            out.extend((ids.len() as u32).to_be_bytes());
+            for (blob, comment) in ids {
+                put(&mut out, &blob);
+                put(&mut out, comment.as_bytes());
             }
             out
         }
         Some(13) => {
             // SIGN_REQUEST: key blob, data, flags
             let (Some(blob), Some(data)) = (r.bytes(), r.bytes()) else { return vec![FAILURE] };
+            let flags = r.u32().unwrap_or(0);
+            if let Some(pin) = pgp_pin()
+                && pgp_blob().as_deref() == Some(blob)
+            {
+                return match crate::pgp::ssh_sign(&pin, data, flags) {
+                    Ok((_, sig)) => {
+                        let mut out = vec![14];
+                        put(&mut out, &sig);
+                        out
+                    }
+                    Err(e) => {
+                        eprintln!("pico-agent: OpenPGP sign failed: {e}");
+                        vec![FAILURE]
+                    }
+                };
+            }
             let Some(key) = load_keys().into_iter().find(|k| k.blob == blob) else { return vec![FAILURE] };
             let Some(dev) = crate::fido::list_devices().into_iter().next() else { return vec![FAILURE] };
             match sign(&dev.path, &key, data) {

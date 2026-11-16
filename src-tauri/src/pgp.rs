@@ -1,5 +1,6 @@
 //! OpenPGP card (Pico OpenPGP): status, PINs, cardholder data, factory reset.
-//! Key generation/import stays with gpg (`gpg --card-edit`).
+//! SSH: the authentication key (generated on the card) is offered by the built-in agent.
+//! Other key generation/import stays with gpg (`gpg --card-edit`).
 use crate::pico::Card;
 use types::{PgpKey, PgpStatus};
 
@@ -129,6 +130,7 @@ pub fn status() -> R<PgpStatus> {
         admin_pin_tries: pw.get(6).copied().unwrap_or(0),
         kdf,
         keys,
+        ssh: auth_key(&card).ok().flatten().map(|k| k.ssh_line(&format!("openpgp:{}", status_serial(&card)))),
     })
 }
 
@@ -246,5 +248,378 @@ mod tests {
     #[ignore]
     fn live_status() {
         println!("{:?}", status());
+    }
+}
+
+// ---------- SSH with the authentication key ----------
+
+/// Algorithms offered for the SSH (authentication) key, with their OpenPGP algorithm attributes.
+pub const SSH_ALGOS: [(&str, &[u8]); 5] = [
+    ("rsa2048", &[0x01, 0x08, 0x00, 0x00, 0x20, 0x00]),
+    ("rsa3072", &[0x01, 0x0C, 0x00, 0x00, 0x20, 0x00]),
+    ("rsa4096", &[0x01, 0x10, 0x00, 0x00, 0x20, 0x00]),
+    ("ed25519", &[0x16, 0x2B, 0x06, 0x01, 0x04, 0x01, 0xDA, 0x47, 0x0F, 0x01]),
+    ("p256", &[0x13, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07]),
+];
+const OID_ED25519: &[u8] = &[0x2B, 0x06, 0x01, 0x04, 0x01, 0xDA, 0x47, 0x0F, 0x01];
+const OID_P256: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07];
+
+/// Public part of the authentication key.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AuthKey {
+    Rsa { n: Vec<u8>, e: Vec<u8> },
+    Ed25519(Vec<u8>),
+    /// Uncompressed point 04||X||Y.
+    P256(Vec<u8>),
+}
+
+impl AuthKey {
+    /// From the algorithm attributes (C3) and the 7F49 public key DO.
+    fn parse(attr: &[u8], pk: &[u8]) -> R<Self> {
+        let body = find(pk, 0x7F49).unwrap_or(pk);
+        let oid = attr.get(1..).map(|o| o.strip_suffix(&[0xFF]).unwrap_or(o)).unwrap_or_default();
+        match attr.first() {
+            Some(0x01) => Ok(Self::Rsa {
+                n: find(body, 0x81).ok_or("No RSA modulus in the key.")?.to_vec(),
+                e: find(body, 0x82).ok_or("No RSA exponent in the key.")?.to_vec(),
+            }),
+            Some(0x16) if oid == OID_ED25519 => {
+                let p = find(body, 0x86).ok_or("No public point in the key.")?;
+                // some cards prefix the native point with 0x40
+                Ok(Self::Ed25519(if p.len() == 33 && p[0] == 0x40 { &p[1..] } else { p }.to_vec()))
+            }
+            Some(0x13) if oid == OID_P256 => Ok(Self::P256(find(body, 0x86).ok_or("No public point in the key.")?.to_vec())),
+            _ => Err(format!("SSH can't use this key type ({}). Generate an RSA, Ed25519 or P-256 key for SSH.", algo(attr))),
+        }
+    }
+
+    pub fn ssh_type(&self) -> &'static str {
+        match self {
+            Self::Rsa { .. } => "ssh-rsa",
+            Self::Ed25519(_) => "ssh-ed25519",
+            Self::P256(_) => "ecdsa-sha2-nistp256",
+        }
+    }
+
+    /// Public key blob as ssh puts it on the wire.
+    pub fn blob(&self) -> Vec<u8> {
+        use crate::agent::{mpint, put};
+        let mut b = vec![];
+        put(&mut b, self.ssh_type().as_bytes());
+        match self {
+            Self::Rsa { n, e } => {
+                mpint(&mut b, e);
+                mpint(&mut b, n);
+            }
+            Self::Ed25519(p) => put(&mut b, p),
+            Self::P256(p) => {
+                put(&mut b, b"nistp256");
+                put(&mut b, p);
+            }
+        }
+        b
+    }
+
+    /// `ssh-rsa AAAA… comment`
+    pub fn ssh_line(&self, comment: &str) -> String {
+        use base64::{Engine, engine::general_purpose::STANDARD as B64};
+        format!("{} {} {comment}", self.ssh_type(), B64.encode(self.blob()))
+    }
+
+    /// OpenPGP v4 fingerprint (RFC 4880 §12.2), as gpg computes it from the creation time.
+    fn fingerprint(&self, created: u32) -> [u8; 20] {
+        fn mpi(out: &mut Vec<u8>, v: &[u8]) {
+            let v: Vec<u8> = v.iter().copied().skip_while(|b| *b == 0).collect();
+            let bits = v.first().map(|b| (v.len() * 8 - b.leading_zeros() as usize) as u16).unwrap_or(0);
+            out.extend(bits.to_be_bytes());
+            out.extend(v);
+        }
+        let mut body = vec![0x04];
+        body.extend(created.to_be_bytes());
+        match self {
+            Self::Rsa { n, e } => {
+                body.push(1);
+                mpi(&mut body, n);
+                mpi(&mut body, e);
+            }
+            Self::Ed25519(p) => {
+                body.push(22);
+                body.push(OID_ED25519.len() as u8);
+                body.extend(OID_ED25519);
+                mpi(&mut body, &[&[0x40u8][..], p].concat());
+            }
+            Self::P256(p) => {
+                body.push(19);
+                body.push(OID_P256.len() as u8);
+                body.extend(OID_P256);
+                mpi(&mut body, p);
+            }
+        }
+        let mut data = vec![0x99];
+        data.extend((body.len() as u16).to_be_bytes());
+        data.extend(body);
+        ring::digest::digest(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY, &data).as_ref().try_into().unwrap()
+    }
+}
+
+/// Extended-length APDU, so RSA-4096 keys and signatures fit in one exchange.
+fn ext(ins: u8, p1: u8, p2: u8, data: &[u8]) -> Vec<u8> {
+    let mut c = vec![0x00, ins, p1, p2, 0x00];
+    if !data.is_empty() {
+        c.extend((data.len() as u16).to_be_bytes());
+        c.extend_from_slice(data);
+    }
+    c.extend([0x00, 0x00]);
+    c
+}
+
+/// The authentication key, or None if the slot is empty.
+fn auth_key(card: &Card) -> R<Option<AuthKey>> {
+    let attr = get_data(card, 0x00C3)?;
+    match card.apdu(&ext(0x47, 0x81, 0x00, &[0xA4, 0x00])) {
+        Ok(pk) => AuthKey::parse(&attr, &pk).map(Some),
+        Err(e) if e.contains("6A88") => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+fn status_serial(card: &Card) -> String {
+    get_data(card, 0x004F).ok().and_then(|a| a.get(10..14).map(crate::fido::hex)).unwrap_or_default().to_uppercase()
+}
+
+/// Generates a new authentication key on the card (replacing any) and returns its SSH line.
+pub fn ssh_generate(admin_pin: &str, algorithm: &str) -> R<String> {
+    let attr = SSH_ALGOS.iter().find(|(n, _)| *n == algorithm).map(|(_, a)| *a).ok_or("Unknown key type.")?;
+    let card = open()?;
+    no_kdf(&card)?;
+    verify(&card, 0x83, admin_pin)?;
+    let mut put = vec![0x00, 0xDA, 0x00, 0xC3, attr.len() as u8];
+    put.extend_from_slice(attr);
+    card.apdu(&put).map_err(|e| {
+        if e.contains("6A80") { "This card's firmware doesn't support that key type.".to_string() } else { e }
+    })?;
+    let pk = card.apdu(&ext(0x47, 0x80, 0x00, &[0xA4, 0x00]))?;
+    let key = AuthKey::parse(attr, &pk)?;
+    // fingerprint (C9) and creation time (D0), so gpg --card-status shows the key like one it made
+    let created = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as u32).unwrap_or(0);
+    for (tag, v) in [(0xC9u8, key.fingerprint(created).to_vec()), (0xD0, created.to_be_bytes().to_vec())] {
+        let mut c = vec![0x00, 0xDA, 0x00, tag, v.len() as u8];
+        c.extend(v);
+        card.apdu(&c)?;
+    }
+    Ok(key.ssh_line(&format!("openpgp:{}", status_serial(&card))))
+}
+
+/// DigestInfo prefixes for PKCS#1 v1.5 (RFC 8017 §9.2 note 1).
+const DI_SHA1: &[u8] = &[0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2B, 0x0E, 0x03, 0x02, 0x1A, 0x05, 0x00, 0x04, 0x14];
+const DI_SHA256: &[u8] = &[0x30, 0x31, 0x30, 0x0D, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20];
+const DI_SHA512: &[u8] = &[0x30, 0x51, 0x30, 0x0D, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40];
+
+/// What INTERNAL AUTHENTICATE gets for `data`, and the SSH signature algorithm name.
+/// `flags`: ssh-agent SIGN_REQUEST flags (2 = rsa-sha2-256, 4 = rsa-sha2-512).
+fn sign_input(key: &AuthKey, data: &[u8], flags: u32) -> (Vec<u8>, &'static str) {
+    use ring::digest::{SHA1_FOR_LEGACY_USE_ONLY, SHA256, SHA512, digest};
+    match key {
+        AuthKey::Rsa { .. } => {
+            let (name, di, alg) = if flags & 4 != 0 {
+                ("rsa-sha2-512", DI_SHA512, &SHA512)
+            } else if flags & 2 != 0 {
+                ("rsa-sha2-256", DI_SHA256, &SHA256)
+            } else {
+                ("ssh-rsa", DI_SHA1, &SHA1_FOR_LEGACY_USE_ONLY)
+            };
+            ([di, digest(alg, data).as_ref()].concat(), name)
+        }
+        AuthKey::Ed25519(_) => (data.to_vec(), "ssh-ed25519"),
+        AuthKey::P256(_) => (digest(&SHA256, data).as_ref().to_vec(), "ecdsa-sha2-nistp256"),
+    }
+}
+
+/// SSH signature blob from what the card returned.
+fn ssh_sig(name: &str, raw: &[u8]) -> Vec<u8> {
+    use crate::agent::{mpint, put};
+    let mut out = vec![];
+    put(&mut out, name.as_bytes());
+    if name == "ecdsa-sha2-nistp256" {
+        let (r, s) = raw.split_at(raw.len() / 2);
+        let mut rs = vec![];
+        mpint(&mut rs, r);
+        mpint(&mut rs, s);
+        put(&mut out, &rs);
+    } else {
+        put(&mut out, raw);
+    }
+    out
+}
+
+/// Signs `data` for ssh with the authentication key. Returns (public blob, signature blob).
+pub fn ssh_sign(pin: &str, data: &[u8], flags: u32) -> R<(Vec<u8>, Vec<u8>)> {
+    let card = open()?;
+    no_kdf(&card)?;
+    let key = auth_key(&card)?.ok_or("The card has no authentication key.")?;
+    verify(&card, 0x82, pin)?;
+    let (input, name) = sign_input(&key, data, flags);
+    let raw = card.apdu(&ext(0x88, 0x00, 0x00, &input))?;
+    Ok((key.blob(), ssh_sig(name, &raw)))
+}
+
+/// The authentication key's blob, for the agent's identity list (no PIN needed).
+pub fn ssh_blob() -> R<Option<Vec<u8>>> {
+    let card = open()?;
+    Ok(auth_key(&card)?.map(|k| k.blob()))
+}
+
+/// Checks the PIN (PW1, the one for signing/authentication) without using the key.
+pub fn check_pin(pin: &str) -> R<()> {
+    let card = open()?;
+    no_kdf(&card)?;
+    verify(&card, 0x82, pin)
+}
+
+#[cfg(test)]
+mod ssh_tests {
+    use super::*;
+
+    #[test]
+    fn auth_key_formats() {
+        // RSA from a 7F49 DO: blob = string("ssh-rsa") mpint(e) mpint(n)
+        let pk = [&[0x7F, 0x49, 0x0A, 0x81, 0x03, 0xC1, 0x02, 0x03, 0x82, 0x03, 0x01, 0x00, 0x01][..]].concat();
+        let k = AuthKey::parse(SSH_ALGOS[0].1, &pk).unwrap();
+        assert_eq!(k, AuthKey::Rsa { n: vec![0xC1, 2, 3], e: vec![1, 0, 1] });
+        let mut want = vec![0, 0, 0, 7];
+        want.extend(b"ssh-rsa");
+        want.extend([0, 0, 0, 3, 1, 0, 1, 0, 0, 0, 4, 0, 0xC1, 2, 3]);
+        assert_eq!(k.blob(), want);
+        assert!(k.ssh_line("c").starts_with("ssh-rsa AAAAB3NzaC1yc2E"));
+
+        // Ed25519 point with and without the 0x40 prefix
+        let p = [7u8; 32];
+        let do_ = |pt: &[u8]| [&[0x7F, 0x49, (pt.len() + 2) as u8, 0x86, pt.len() as u8][..], pt].concat();
+        assert_eq!(AuthKey::parse(SSH_ALGOS[3].1, &do_(&p)).unwrap(), AuthKey::Ed25519(p.to_vec()));
+        assert_eq!(AuthKey::parse(SSH_ALGOS[3].1, &do_(&[&[0x40u8][..], &p].concat())).unwrap(), AuthKey::Ed25519(p.to_vec()));
+        assert!(AuthKey::parse(&[0x12, 0x2B, 0x81, 0x04, 0x00, 0x22], &do_(&p)).is_err(), "ECDH isn't for ssh");
+
+        // RSA signing input: DigestInfo + hash, picked by the agent flags
+        let (i, n) = sign_input(&k, b"abc", 2);
+        assert_eq!((n, i.len()), ("rsa-sha2-256", DI_SHA256.len() + 32));
+        assert_eq!(sign_input(&k, b"abc", 4).1, "rsa-sha2-512");
+        assert_eq!(sign_input(&k, b"abc", 0).1, "ssh-rsa");
+
+        // ECDSA r||s -> string(name) string(mpint r, mpint s)
+        let sig = ssh_sig("ecdsa-sha2-nistp256", &[[0x80u8; 32], [0x01u8; 32]].concat());
+        assert_eq!(&sig[4..23], b"ecdsa-sha2-nistp256");
+        assert_eq!(&sig[27..31], &[0, 0, 0, 33], "high bit set: mpint gets a 0x00 prefix");
+    }
+}
+
+/// Against an emulated Pico OpenPGP with factory PINs (123456 / 12345678), e.g.
+/// `ci/emulator/run.sh <pico_openpgp> cargo test -p picokeys-app -- --ignored openpgp_ --test-threads=1`
+#[cfg(test)]
+mod live {
+    use super::*;
+    use base64::{Engine, engine::general_purpose::STANDARD as B64};
+    use ring::signature::{self as sig, UnparsedPublicKey};
+
+    const PIN: &str = "123456";
+    const ADMIN: &str = "12345678";
+
+    /// string(name) string(raw) -> (name, raw)
+    fn split(blob: &[u8]) -> (String, Vec<u8>) {
+        let n = u32::from_be_bytes(blob[..4].try_into().unwrap()) as usize;
+        let name = String::from_utf8(blob[4..4 + n].to_vec()).unwrap();
+        let rest = &blob[4 + n..];
+        let m = u32::from_be_bytes(rest[..4].try_into().unwrap()) as usize;
+        (name, rest[4..4 + m].to_vec())
+    }
+
+    /// ECDSA ssh signature body (mpint r, mpint s) -> fixed r||s.
+    fn fixed_rs(body: &[u8]) -> Vec<u8> {
+        let (r, rest) = {
+            let n = u32::from_be_bytes(body[..4].try_into().unwrap()) as usize;
+            (&body[4..4 + n], &body[4 + n..])
+        };
+        let n = u32::from_be_bytes(rest[..4].try_into().unwrap()) as usize;
+        let s = &rest[4..4 + n];
+        let pad = |v: &[u8]| {
+            let v: Vec<u8> = v.iter().copied().skip_while(|b| *b == 0).collect();
+            [vec![0; 32 - v.len()], v].concat()
+        };
+        [pad(r), pad(s)].concat()
+    }
+
+    #[test]
+    #[ignore]
+    fn openpgp_ssh_live() {
+        check_pin(PIN).unwrap();
+        assert!(check_pin("000000").is_err());
+        check_pin(PIN).unwrap(); // reset the retry counter
+        let msg = b"ssh session data to sign";
+        for algo in ["rsa2048", "p256", "ed25519"] {
+            let line = ssh_generate(ADMIN, algo).unwrap();
+            println!("{algo}: {}", &line[..60.min(line.len())]);
+            assert_eq!(status().unwrap().ssh.as_deref(), Some(line.as_str()));
+            let blob = B64.decode(line.split(' ').nth(1).unwrap()).unwrap();
+            assert_eq!(ssh_blob().unwrap().unwrap(), blob);
+            let card = open().unwrap();
+            let key = auth_key(&card).unwrap().unwrap();
+            drop(card);
+            for flags in [0u32, 2, 4] {
+                let (pk, s) = ssh_sign(PIN, msg, flags).unwrap();
+                assert_eq!(pk, blob);
+                let (name, raw) = split(&s);
+                match &key {
+                    AuthKey::Rsa { n, e } => {
+                        let (want, alg): (&str, &sig::RsaParameters) = match flags {
+                            4 => ("rsa-sha2-512", &sig::RSA_PKCS1_2048_8192_SHA512),
+                            2 => ("rsa-sha2-256", &sig::RSA_PKCS1_2048_8192_SHA256),
+                            _ => ("ssh-rsa", &sig::RSA_PKCS1_2048_8192_SHA1_FOR_LEGACY_USE_ONLY),
+                        };
+                        assert_eq!(name, want);
+                        sig::RsaPublicKeyComponents { n, e }.verify(alg, msg, &raw).unwrap();
+                    }
+                    AuthKey::P256(p) => {
+                        assert_eq!(name, "ecdsa-sha2-nistp256");
+                        UnparsedPublicKey::new(&sig::ECDSA_P256_SHA256_FIXED, p).verify(msg, &fixed_rs(&raw)).unwrap();
+                    }
+                    AuthKey::Ed25519(p) => {
+                        assert_eq!(name, "ssh-ed25519");
+                        UnparsedPublicKey::new(&sig::ED25519, p).verify(msg, &raw).unwrap();
+                    }
+                }
+            }
+        }
+        assert!(ssh_generate("wrongadmin", "rsa2048").is_err());
+    }
+
+    /// Real ssh logins into sshd on 127.0.0.1:2222 through the built-in agent.
+    #[test]
+    #[ignore]
+    fn openpgp_agent_login_live() {
+        let home = std::env::var("HOME").unwrap();
+        let sock = crate::agent::socket_path().unwrap();
+        crate::agent::start().unwrap();
+        assert!(crate::agent::set_pgp_pin(Some("000000".into())).is_err(), "wrong PIN refused");
+        crate::agent::set_pgp_pin(Some(PIN.into())).unwrap();
+        for (algo, pubkey_algos) in [
+            ("rsa2048", "rsa-sha2-512"),
+            ("rsa2048", "rsa-sha2-256"),
+            ("p256", "ecdsa-sha2-nistp256"),
+            ("ed25519", "ssh-ed25519"),
+        ] {
+            let line = ssh_generate(ADMIN, algo).unwrap();
+            std::fs::write(format!("{home}/.ssh/authorized_keys"), format!("{line}\n")).unwrap();
+            let out = std::process::Command::new("ssh")
+                .args(["-p", "2222", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"])
+                .args(["-o", &format!("IdentityAgent={}", sock.display()), "-o", &format!("PubkeyAcceptedAlgorithms={pubkey_algos}")])
+                .args(["-o", "LogLevel=ERROR", "root@127.0.0.1", "echo logged-in"])
+                .output()
+                .unwrap();
+            println!("{algo} via {pubkey_algos}: {} {}", String::from_utf8_lossy(&out.stdout).trim(), String::from_utf8_lossy(&out.stderr).trim());
+            assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "logged-in", "{algo}/{pubkey_algos}");
+        }
+        let st = crate::agent::status().unwrap();
+        assert!(st.pgp && st.keys.iter().any(|k| k.ends_with("openpgp-card")), "{:?}", st.keys);
+        crate::agent::set_pgp_pin(None).unwrap();
+        crate::agent::stop().unwrap();
     }
 }

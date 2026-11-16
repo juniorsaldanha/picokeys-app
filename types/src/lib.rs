@@ -496,6 +496,8 @@ pub struct AgentStatus {
     /// "type comment" of each security-key SSH key the agent offers.
     pub keys: Vec<String>,
     pub has_pin: bool,
+    /// The OpenPGP card's authentication key is offered (its PIN is set).
+    pub pgp: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -533,6 +535,8 @@ pub struct PgpStatus {
     /// PINs are hashed client-side (KDF-DO); the app then leaves PIN changes to gpg.
     pub kdf: bool,
     pub keys: Vec<PgpKey>,
+    /// The authentication key as an SSH public key line, when ssh can use it.
+    pub ssh: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

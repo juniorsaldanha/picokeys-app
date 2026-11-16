@@ -228,6 +228,23 @@ async fn pgp_set_cardholder(admin_pin: String, name: String, url: String) -> Res
     .await)
 }
 
+/// Replaces the OpenPGP authentication key with a new one made on the card; returns its SSH line.
+#[tauri::command]
+async fn pgp_ssh_generate(admin_pin: String, algorithm: String) -> Result<String, String> {
+    let detail = algorithm.clone();
+    audit::log("pgp_ssh_generate", &detail, async move {
+        admin::require()?;
+        blocking(move || pgp::ssh_generate(&admin_pin, &algorithm)).await
+    }
+    .await)
+}
+
+/// Offer (Some PIN) or stop offering (None) the card's authentication key in the built-in agent.
+#[tauri::command]
+async fn agent_pgp(pin: Option<String>) -> Result<(), String> {
+    blocking(move || agent::set_pgp_pin(pin)).await
+}
+
 #[tauri::command]
 async fn pgp_factory_reset(admin_pin: Option<String>, confirm: String) -> Result<(), String> {
     let detail = String::new();
@@ -654,7 +671,7 @@ fn main() {
             pgp_change_pin,
             pgp_reset_pin,
             pgp_set_cardholder,
-            pgp_factory_reset,
+            pgp_factory_reset, pgp_ssh_generate, agent_pgp,
             recovery_files,
             recovery_export,
             agent_status,

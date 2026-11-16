@@ -58,7 +58,7 @@ pub fn SshPage() -> Element {
 }
 
 #[component]
-fn CopyButton(text: String, #[props(default = "Copy")] label: &'static str) -> Element {
+pub(crate) fn CopyButton(text: String, #[props(default = "Copy")] label: &'static str) -> Element {
     let mut copied = use_signal(|| false);
     rsx! {
         Button {

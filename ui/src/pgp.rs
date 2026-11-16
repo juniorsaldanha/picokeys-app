@@ -1,9 +1,9 @@
-//! OpenPGP page (Pico OpenPGP firmware): card status, PINs, cardholder data, reset.
-//! Key generation/import stays with gpg.
+//! OpenPGP page (Pico OpenPGP firmware): card status, an SSH key made on the card (ssh-rsa for
+//! servers that accept nothing else), PINs, cardholder data, reset. Other key generation stays with gpg.
 use crate::api;
 use crate::pages::{ErrorBox, PageHeader};
 use dioxus::prelude::*;
-use icons::{FileKey, RefreshCw, RotateCcw};
+use icons::{FileKey, KeyRound, Plug, RefreshCw, RotateCcw};
 use types::{PgpKey, PgpStatus};
 
 use crate::ui::badge::{Badge, BadgeVariant};
@@ -28,6 +28,7 @@ pub fn PgpPage() -> Element {
                     Overview { s: s.clone() }
                     Keys { keys: s.keys.clone() }
                 }
+                SshKey { ssh: s.ssh.clone(), on_change: refresh }
                 Pins { s: s.clone(), on_change: refresh }
                 Cardholder { s: s.clone(), on_change: refresh }
                 Reset { on_change: refresh }
@@ -314,5 +315,139 @@ mod tests {
     #[test]
     fn fingerprint_groups() {
         assert_eq!(super::fingerprint("abcdef0123456789"), "ABCD EF01 2345 6789");
+    }
+}
+
+const SSH_TYPES: [(&str, &str); 5] = [
+    ("rsa4096", "RSA 4096 (ssh-rsa)"),
+    ("rsa3072", "RSA 3072 (ssh-rsa)"),
+    ("rsa2048", "RSA 2048 (ssh-rsa)"),
+    ("ed25519", "Ed25519 (ssh-ed25519)"),
+    ("p256", "ECDSA P-256 (ecdsa-sha2-nistp256)"),
+];
+
+/// The authentication key as an SSH key: show it, make a new one, offer it to the built-in agent.
+#[component]
+fn SshKey(ssh: Option<String>, on_change: EventHandler<()>) -> Element {
+    let mut algorithm = use_signal(|| "rsa4096".to_string());
+    let mut admin = use_signal(String::new);
+    let mut replace = use_signal(|| false);
+    let mut busy = use_signal(|| false);
+    let mut msg = use_signal(|| None::<Result<String, String>>);
+    let mut pin = use_signal(String::new);
+    let mut agent = use_resource(api::agent_status);
+    let mut agent_msg = use_signal(|| None::<Result<String, String>>);
+    let has_key = ssh.is_some();
+    let generate = move |_| async move {
+        busy.set(true);
+        msg.set(None);
+        let (a, alg) = (admin.peek().clone(), algorithm.peek().clone());
+        let r = api::pgp_ssh_generate(&a, &alg).await;
+        if r.is_ok() {
+            admin.set(String::new());
+            replace.set(false);
+            on_change.call(());
+        }
+        msg.set(Some(r.map(|_| "New SSH key made on the card. Add its public key below to the servers you use.".into())));
+        busy.set(false);
+    };
+    let offer = move |on: bool| async move {
+        let p = pin.peek().clone();
+        let r = api::agent_pgp(on.then_some(p.as_str())).await;
+        if r.is_ok() {
+            pin.set(String::new());
+        }
+        agent_msg.set(Some(r.map(|_| if on { "The agent now offers this key.".into() } else { "The agent stopped offering this key.".into() })));
+        agent.restart();
+    };
+    let select_cls = "h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50 dark:bg-input/30";
+    let rsa_slow = algorithm().starts_with("rsa");
+    let ag = agent.read().clone().and_then(|r| r.ok());
+    rsx! {
+        Card { class: "mt-4",
+            CardHeader {
+                CardTitle { class: "flex items-center gap-2", KeyRound { class: "size-4" } "SSH key" }
+                CardDescription {
+                    "The card's authentication key, used as a regular SSH key: ssh-rsa for services that accept nothing else (Azure DevOps, many hosting panels). It's made on the card and can't be copied off it. The app's built-in agent signs with it, so you don't need gpg."
+                }
+            }
+            CardContent { class: "flex flex-col gap-4 text-sm",
+                if let Some(line) = &ssh {
+                    div { class: "flex flex-col gap-2",
+                        code { class: "selectable block truncate rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground", "{line}" }
+                        div { class: "flex flex-wrap gap-2",
+                            crate::ssh::CopyButton { text: line.clone(), label: "Copy public key" }
+                        }
+                    }
+                } else {
+                    p { class: "text-muted-foreground", "No SSH key on the card yet. Make one below." }
+                }
+
+                div { class: "flex flex-col gap-3 rounded-lg border p-3",
+                    p { class: "font-medium", if has_key { "Replace with a new key" } else { "Make a key" } }
+                    div { class: "grid gap-3 sm:grid-cols-2",
+                        div { class: "flex flex-col gap-1.5",
+                            Label { "Type" }
+                            select { class: select_cls, onchange: move |e: FormEvent| algorithm.set(e.value()),
+                                for (v, l) in SSH_TYPES { option { value: v, selected: algorithm() == v, "{l}" } }
+                            }
+                        }
+                        div { class: "flex flex-col gap-1.5",
+                            Label { "Admin PIN" }
+                            Input { r#type: InputType::Password, value: admin(), placeholder: "Factory default: 12345678", oninput: move |e: FormEvent| admin.set(e.value()) }
+                        }
+                    }
+                    if rsa_slow { p { class: "text-xs text-muted-foreground", "RSA keys take a while to make on the key: up to a few minutes for 4096 bits. Leave it plugged in." } }
+                    if has_key {
+                        label { class: "flex items-start gap-2 text-xs",
+                            input { r#type: "checkbox", class: "mt-0.5", checked: replace(), onchange: move |e: FormEvent| replace.set(e.checked()) }
+                            "Replace the current key. Servers that trust it will stop accepting it, and it can't be recovered."
+                        }
+                    }
+                    div {
+                        Button { size: ButtonSize::Sm, disabled: busy() || admin().len() < 8 || (has_key && !replace()), onclick: generate,
+                            if busy() { Spinner {} } else { KeyRound {} }
+                            if busy() { "Making the key…" } else if has_key { "Replace key" } else { "Make key" }
+                        }
+                    }
+                    match msg() {
+                        Some(Ok(m)) => rsx! { p { class: "text-success", "{m}" } },
+                        Some(Err(e)) => rsx! { p { class: "text-destructive", "{e}" } },
+                        None => rsx! {},
+                    }
+                }
+
+                if has_key {
+                    div { class: "flex flex-col gap-3 rounded-lg border p-3",
+                        div { class: "flex items-center justify-between gap-3",
+                            p { class: "font-medium", "Use with the built-in SSH agent" }
+                            if ag.as_ref().is_some_and(|a| a.pgp) { Badge { variant: BadgeVariant::Success, "Offered" } }
+                        }
+                        p { class: "text-xs text-muted-foreground",
+                            "Enter the card's PIN (not the Admin PIN) to have the agent offer this key. The PIN stays in memory until you stop it or quit the app. Turn the agent on and point ssh at it on the SSH & Git page."
+                        }
+                        if ag.as_ref().is_some_and(|a| !a.running) {
+                            p { class: "text-xs text-warning", "The agent isn't running. Start it on the SSH & Git page." }
+                        }
+                        if ag.as_ref().is_some_and(|a| a.pgp) {
+                            div { Button { variant: ButtonVariant::Outline, size: ButtonSize::Sm, onclick: move |_| offer(false), "Stop offering" } }
+                        } else {
+                            div { class: "flex flex-wrap items-end gap-2",
+                                div { class: "flex flex-col gap-1.5",
+                                    Label { "PIN" }
+                                    Input { r#type: InputType::Password, value: pin(), placeholder: "Factory default: 123456", oninput: move |e: FormEvent| pin.set(e.value()) }
+                                }
+                                Button { size: ButtonSize::Sm, disabled: pin().len() < 6, onclick: move |_| offer(true), Plug {} "Offer key" }
+                            }
+                        }
+                        match agent_msg() {
+                            Some(Ok(m)) => rsx! { p { class: "text-success", "{m}" } },
+                            Some(Err(e)) => rsx! { p { class: "text-destructive", "{e}" } },
+                            None => rsx! {},
+                        }
+                    }
+                }
+            }
+        }
     }
 }

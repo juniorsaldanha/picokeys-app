@@ -431,6 +431,22 @@ struct PgpResetArgs<'a> {
 pub async fn pgp_factory_reset(admin_pin: Option<&str>, confirm: &str) -> Result<(), String> {
     guarded("pgp_factory_reset", PgpResetArgs { admin_pin, confirm }).await
 }
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PgpSshArgs<'a> {
+    admin_pin: &'a str,
+    algorithm: &'a str,
+}
+pub async fn pgp_ssh_generate(admin_pin: &str, algorithm: &str) -> Result<String, String> {
+    guarded("pgp_ssh_generate", PgpSshArgs { admin_pin, algorithm }).await
+}
+#[derive(Serialize)]
+struct AgentPgpArgs<'a> {
+    pin: Option<&'a str>,
+}
+pub async fn agent_pgp(pin: Option<&str>) -> Result<(), String> {
+    call("agent_pgp", AgentPgpArgs { pin }).await
+}
 
 pub async fn hsm_status() -> Result<types::HsmStatus, String> {
     call("hsm_status", NONE).await
