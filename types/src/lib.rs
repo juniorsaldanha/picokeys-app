@@ -35,3 +35,65 @@ pub struct Passkey {
     pub cred_id: String,
     pub cred_protect: String,
 }
+
+/// Pico Keys SDK "rescue" applet info (shared by Pico FIDO / HSM / OpenPGP).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct PicoInfo {
+    pub mcu: String,
+    pub product: String,
+    pub version: String,
+    pub serial: String,
+    pub build: Option<u32>,
+    pub flash: Option<Flash>,
+    pub secure_boot: Option<SecureBoot>,
+    pub phy: Phy,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct Flash {
+    pub free: u32,
+    pub used: u32,
+    pub total: u32,
+    pub files: u32,
+    pub size: u32,
+    pub firmware: Option<u32>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct SecureBoot {
+    pub enabled: bool,
+    pub locked: bool,
+    pub bootkey: u8,
+}
+
+/// Device configuration ("PHY" file 0xE020). `None` = not set, firmware default.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct Phy {
+    pub vid: Option<u16>,
+    pub pid: Option<u16>,
+    pub led_gpio: Option<u8>,
+    pub led_brightness: Option<u8>,
+    pub opts: u16,
+    /// Seconds to wait for a button press; 0/None disables user presence on the button.
+    pub up_btn: Option<u8>,
+    pub usb_product: Option<String>,
+    pub enabled_curves: Option<u32>,
+    pub enabled_usb_itf: Option<u8>,
+    pub led_driver: Option<u8>,
+    pub led_order: Option<u8>,
+}
+
+impl Phy {
+    pub const OPT_WCID: u16 = 0x1;
+    pub const OPT_DIMM: u16 = 0x2;
+    pub const OPT_DISABLE_POWER_RESET: u16 = 0x4;
+    pub const OPT_LED_STEADY: u16 = 0x8;
+
+    pub const ITF_CCID: u8 = 0x1;
+    pub const ITF_WCID: u8 = 0x2;
+    pub const ITF_HID: u8 = 0x4;
+    pub const ITF_KB: u8 = 0x8;
+    pub const ITF_ALL: u8 = 0x1F;
+
+    pub const CURVE_SECP256K1: u32 = 0x8;
+}

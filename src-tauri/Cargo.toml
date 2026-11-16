@@ -12,3 +12,5 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 ctap-hid-fido2 = "3.6"
 types = { path = "../types" }
+pcsc = "2.9.0"
+hidapi = "2"

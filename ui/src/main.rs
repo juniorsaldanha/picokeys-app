@@ -1,9 +1,10 @@
 mod api;
+mod device;
 mod pages;
 mod ui;
 
 use dioxus::prelude::*;
-use icons::{KeyRound, LayoutDashboard, RectangleEllipsis, Usb};
+use icons::{Cpu, KeyRound, LayoutDashboard, RectangleEllipsis, Usb};
 use types::{Device, FidoInfo};
 use ui::spinner::Spinner;
 use ui::theme_toggle::ThemeToggle;
@@ -19,6 +20,7 @@ pub enum Page {
     Overview,
     Passkeys,
     Pin,
+    Device,
 }
 
 /// App-wide state. Signals are `Copy`, so pages grab this via `use_context`.
@@ -76,6 +78,7 @@ fn App() -> Element {
                             Page::Overview => rsx! { pages::Overview {} },
                             Page::Passkeys => rsx! { pages::Passkeys {} },
                             Page::Pin => rsx! { pages::PinPage {} },
+                            Page::Device => rsx! { device::DevicePage {} },
                         }
                     }
                 }
@@ -147,6 +150,10 @@ fn Sidebar(devices: Signal<Vec<Device>>, page: Signal<Page>) -> Element {
                 NavItem { page, target: Page::Overview, label: "Overview", icon: rsx! { LayoutDashboard {} } }
                 NavItem { page, target: Page::Passkeys, label: "Passkeys", icon: rsx! { KeyRound {} } }
                 NavItem { page, target: Page::Pin, label: "PIN", icon: rsx! { RectangleEllipsis {} } }
+            }
+            div { class: "px-2 pb-1.5 pt-4 text-[11px] font-medium uppercase tracking-wider text-muted-foreground", "Pico" }
+            nav { class: "flex flex-col gap-0.5",
+                NavItem { page, target: Page::Device, label: "Device", icon: rsx! { Cpu {} } }
             }
 
             div { class: "flex-1" }

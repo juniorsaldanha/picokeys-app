@@ -1,0 +1,324 @@
+//! Pico Keys SDK "rescue" applet (PC/SC, CCID) + raw CTAPHID authenticatorReset.
+//!
+//! Protocol read from pico-keys-sdk `src/rescue.c` and `src/fs/phy.c`:
+//! SELECT AID A0583FC19B7E4F21 → [mcu, product, major, minor, serial.., build u32]
+//! CLA 0x80, INS 0x1E READ (P1 1=PHY, 2=flash, 3=secure boot), INS 0x1C WRITE (P1 1=PHY).
+use pcsc::{Context, Protocols, Scope, ShareMode};
+use std::ffi::CString;
+use std::time::{Duration, Instant};
+use types::{Flash, Phy, PicoInfo, SecureBoot};
+
+type R<T> = Result<T, String>;
+
+const RESCUE_AID: [u8; 8] = [0xA0, 0x58, 0x3F, 0xC1, 0x9B, 0x7E, 0x4F, 0x21];
+
+const TAG_VIDPID: u8 = 0x0;
+const TAG_LED_GPIO: u8 = 0x4;
+const TAG_LED_BTNESS: u8 = 0x5;
+const TAG_OPTS: u8 = 0x6;
+const TAG_UP_BTN: u8 = 0x8;
+const TAG_USB_PRODUCT: u8 = 0x9;
+const TAG_CURVES: u8 = 0xA;
+const TAG_USB_ITF: u8 = 0xB;
+const TAG_LED_DRIVER: u8 = 0xC;
+
+struct Card(pcsc::Card);
+
+impl Card {
+    /// ponytail: picks the first reader named like a Pico Key; map HID path ↔ reader when multi-key matters.
+    fn open() -> R<Self> {
+        let ctx = Context::establish(Scope::User).map_err(|e| format!("PC/SC unavailable: {e}"))?;
+        let mut buf = vec![0u8; ctx.list_readers_len().map_err(|e| e.to_string())?];
+        let readers: Vec<CString> = ctx.list_readers(&mut buf).map_err(|e| e.to_string())?.map(|r| r.to_owned()).collect();
+        let reader = readers
+            .iter()
+            .find(|r| r.to_string_lossy().to_lowercase().contains("pico"))
+            .ok_or("No Pico Key smart-card interface found (is CCID enabled?)")?;
+        let card = ctx.connect(reader, ShareMode::Shared, Protocols::ANY).map_err(|e| e.to_string())?;
+        Ok(Card(card))
+    }
+
+    fn apdu(&self, cmd: &[u8]) -> R<Vec<u8>> {
+        let mut out = [0u8; pcsc::MAX_BUFFER_SIZE_EXTENDED];
+        let rsp = self.0.transmit(cmd, &mut out).map_err(|e| e.to_string())?;
+        let (data, sw) = rsp.split_at(rsp.len().saturating_sub(2));
+        match sw {
+            [0x90, 0x00] => Ok(data.to_vec()),
+            [0x69, 0x85] => Err("Not confirmed on the key (touch the button when it blinks).".into()),
+            [a, b] => Err(format!("Key returned status {a:02X}{b:02X}")),
+            _ => Err("Malformed response".into()),
+        }
+    }
+
+    fn select(&self) -> R<Vec<u8>> {
+        let mut cmd = vec![0x00, 0xA4, 0x04, 0x00, RESCUE_AID.len() as u8];
+        cmd.extend_from_slice(&RESCUE_AID);
+        cmd.push(0x00);
+        self.apdu(&cmd)
+    }
+
+    fn read(&self, p1: u8) -> R<Vec<u8>> {
+        self.apdu(&[0x80, 0x1E, p1, 0x00, 0x00])
+    }
+}
+
+pub fn info() -> R<PicoInfo> {
+    let card = Card::open()?;
+    let sel = card.select()?;
+    if sel.len() < 5 {
+        return Err("Unexpected rescue applet response".into());
+    }
+    // serial is 8 bytes on hardware, 16 in the emulator; older firmware (e.g. 8.0) omits the build number
+    let serial_len = if sel[0] == 3 { 16 } else { 8 }.min(sel.len() - 4);
+    let serial = &sel[4..4 + serial_len];
+    let build = sel.get(4 + serial_len..8 + serial_len).map(|b| u32::from_be_bytes(b.try_into().unwrap()));
+    let phy = parse_phy(&card.read(1)?);
+    let flash = card.read(2).ok().and_then(|d| parse_flash(&d));
+    let secure_boot = card
+        .read(3)
+        .ok()
+        .filter(|d| d.len() >= 3)
+        .map(|d| SecureBoot { enabled: d[0] == 1, locked: d[1] == 1, bootkey: d[2] });
+    Ok(PicoInfo {
+        mcu: mcu_name(sel[0]).into(),
+        product: product_name(sel[1]).into(),
+        version: format!("{}.{}", sel[2], sel[3]),
+        serial: serial.iter().map(|b| format!("{b:02X}")).collect(),
+        build,
+        flash,
+        secure_boot,
+        phy,
+    })
+}
+
+/// Firmware replaces the whole PHY block on write, so always send the full config.
+pub fn write_phy(phy: &Phy) -> R<()> {
+    let data = serialize_phy(phy)?;
+    let card = Card::open()?;
+    card.select()?;
+    let mut cmd = vec![0x80, 0x1C, 0x01, 0x00, data.len() as u8];
+    cmd.extend_from_slice(&data);
+    card.apdu(&cmd).map(|_| ())
+}
+
+fn mcu_name(b: u8) -> &'static str {
+    match b {
+        0 => "RP2040",
+        1 => "RP2350",
+        2 => "ESP32-S3",
+        3 => "Emulation",
+        4 => "ESP32-S2",
+        _ => "Unknown",
+    }
+}
+
+fn product_name(b: u8) -> &'static str {
+    // 2 is confirmed in pico-fido defs.c; 1/3 follow the HSM, FIDO, OpenPGP release order.
+    match b {
+        1 => "Pico HSM",
+        2 => "Pico FIDO",
+        3 => "Pico OpenPGP",
+        _ => "Pico Key",
+    }
+}
+
+fn be32(d: &[u8], i: usize) -> Option<u32> {
+    d.get(i * 4..i * 4 + 4).map(|s| u32::from_be_bytes(s.try_into().unwrap()))
+}
+
+fn parse_flash(d: &[u8]) -> Option<Flash> {
+    Some(Flash {
+        free: be32(d, 0)?,
+        used: be32(d, 1)?,
+        total: be32(d, 2)?,
+        files: be32(d, 3)?,
+        size: be32(d, 4)?,
+        firmware: be32(d, 5),
+    })
+}
+
+fn parse_phy(d: &[u8]) -> Phy {
+    let mut p = Phy::default();
+    let mut i = 0;
+    while i + 2 <= d.len() {
+        let (tag, len) = (d[i], d[i + 1] as usize);
+        let Some(v) = d.get(i + 2..i + 2 + len) else { break };
+        match (tag, len) {
+            (TAG_VIDPID, 4) => {
+                p.vid = Some(u16::from_be_bytes([v[0], v[1]]));
+                p.pid = Some(u16::from_be_bytes([v[2], v[3]]));
+            }
+            (TAG_LED_GPIO, 1) => p.led_gpio = Some(v[0]),
+            (TAG_LED_BTNESS, 1) => p.led_brightness = Some(v[0]),
+            (TAG_OPTS, 2) => p.opts = u16::from_be_bytes([v[0], v[1]]),
+            (TAG_UP_BTN, 1) => p.up_btn = Some(v[0]),
+            (TAG_USB_PRODUCT, 1..) => {
+                p.usb_product = Some(String::from_utf8_lossy(v).trim_end_matches('\0').to_string())
+            }
+            (TAG_CURVES, 4) => p.enabled_curves = Some(u32::from_be_bytes(v.try_into().unwrap())),
+            (TAG_USB_ITF, 1) => p.enabled_usb_itf = Some(v[0]),
+            (TAG_LED_DRIVER, 1..) => {
+                p.led_driver = Some(v[0]);
+                p.led_order = v.get(1).copied();
+            }
+            _ => {}
+        }
+        i += 2 + len;
+    }
+    p
+}
+
+fn serialize_phy(p: &Phy) -> R<Vec<u8>> {
+    let mut o = vec![];
+    let mut tlv = |tag: u8, v: &[u8]| {
+        o.push(tag);
+        o.push(v.len() as u8);
+        o.extend_from_slice(v);
+    };
+    if let (Some(vid), Some(pid)) = (p.vid, p.pid) {
+        let (v, q) = (vid.to_be_bytes(), pid.to_be_bytes());
+        tlv(TAG_VIDPID, &[v[0], v[1], q[0], q[1]]);
+    }
+    if let Some(g) = p.led_gpio {
+        tlv(TAG_LED_GPIO, &[g]);
+    }
+    if let Some(b) = p.led_brightness {
+        tlv(TAG_LED_BTNESS, &[b]);
+    }
+    tlv(TAG_OPTS, &p.opts.to_be_bytes());
+    if let Some(b) = p.up_btn {
+        tlv(TAG_UP_BTN, &[b]);
+    }
+    if let Some(name) = p.usb_product.as_deref().filter(|s| !s.is_empty()) {
+        // firmware buffer is 32 bytes including the NUL
+        if name.len() > 31 || !name.is_ascii() {
+            return Err("USB product name must be ASCII, at most 31 characters.".into());
+        }
+        let mut v = name.as_bytes().to_vec();
+        v.push(0);
+        tlv(TAG_USB_PRODUCT, &v);
+    }
+    if let Some(c) = p.enabled_curves {
+        tlv(TAG_CURVES, &c.to_be_bytes());
+    }
+    if let Some(u) = p.enabled_usb_itf {
+        if u & (Phy::ITF_HID | Phy::ITF_CCID) == 0 {
+            return Err("Keep HID or CCID enabled, or the key can't be managed anymore.".into());
+        }
+        tlv(TAG_USB_ITF, &[u]);
+    }
+    if let Some(d) = p.led_driver {
+        match p.led_order {
+            Some(ord) => tlv(TAG_LED_DRIVER, &[d, ord]),
+            None => tlv(TAG_LED_DRIVER, &[d]),
+        }
+    }
+    Ok(o)
+}
+
+// ---------------------------------------------------------------------------
+// FIDO factory reset (authenticatorReset, CTAP 0x07) over raw CTAPHID.
+// ctap-hid-fido2 doesn't expose it. Pico FIDO only accepts it within 10 s of
+// power-up and after a button press.
+// ---------------------------------------------------------------------------
+
+const CTAPHID_INIT: u8 = 0x86;
+const CTAPHID_CBOR: u8 = 0x90;
+const CTAPHID_KEEPALIVE: u8 = 0xBB;
+const CTAPHID_ERROR: u8 = 0xBF;
+
+pub fn fido_reset(path: &str) -> R<()> {
+    let api = hidapi::HidApi::new().map_err(|e| e.to_string())?;
+    let dev = api.open_path(&CString::new(path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+
+    let send = |cid: [u8; 4], cmd: u8, data: &[u8]| -> R<()> {
+        let mut pkt = [0u8; 65]; // report id 0 + 64
+        pkt[1..5].copy_from_slice(&cid);
+        pkt[5] = cmd;
+        pkt[6..8].copy_from_slice(&(data.len() as u16).to_be_bytes());
+        pkt[8..8 + data.len()].copy_from_slice(data);
+        dev.write(&pkt).map(|_| ()).map_err(|e| e.to_string())
+    };
+    let recv = |cid: [u8; 4], deadline: Instant| -> R<(u8, Vec<u8>)> {
+        let mut buf = [0u8; 64];
+        loop {
+            if Instant::now() > deadline {
+                return Err("Timed out waiting for the key.".into());
+            }
+            let n = dev.read_timeout(&mut buf, 250).map_err(|e| e.to_string())?;
+            if n < 7 || buf[0..4] != cid {
+                continue;
+            }
+            if buf[4] == CTAPHID_KEEPALIVE {
+                continue; // waiting for touch
+            }
+            let len = u16::from_be_bytes([buf[5], buf[6]]) as usize;
+            return Ok((buf[4], buf[7..7 + len.min(57)].to_vec()));
+        }
+    };
+
+    let nonce: [u8; 8] = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as u64).to_be_bytes();
+    send([0xFF; 4], CTAPHID_INIT, &nonce)?;
+    let (_, init) = recv([0xFF; 4], Instant::now() + Duration::from_secs(2))?;
+    if init.len() < 12 || init[..8] != nonce {
+        return Err("CTAPHID init failed".into());
+    }
+    let cid: [u8; 4] = init[8..12].try_into().unwrap();
+
+    send(cid, CTAPHID_CBOR, &[0x07])?;
+    let (cmd, rsp) = recv(cid, Instant::now() + Duration::from_secs(40))?;
+    match (cmd, rsp.first()) {
+        (CTAPHID_CBOR, Some(0x00)) => Ok(()),
+        (CTAPHID_CBOR, Some(0x30)) => Err("Reset is only allowed within 10 seconds of plugging in the key. Replug it and try again.".into()),
+        (CTAPHID_CBOR, Some(0x2F)) => Err("No touch detected. Try again and touch the key when it blinks.".into()),
+        (CTAPHID_CBOR, Some(0x27)) => Err("Reset was denied on the key.".into()),
+        (CTAPHID_CBOR, Some(s)) => Err(format!("Reset failed (CTAP error 0x{s:02X})")),
+        (CTAPHID_ERROR, e) => Err(format!("CTAPHID error {e:?}")),
+        _ => Err("Unexpected reply to reset".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn phy_roundtrip_matches_firmware_layout() {
+        let p = Phy {
+            vid: Some(0x2E8A),
+            pid: Some(0x10FE),
+            led_gpio: Some(48),
+            led_brightness: Some(15),
+            opts: Phy::OPT_DIMM,
+            up_btn: Some(15),
+            usb_product: Some("My Key".into()),
+            enabled_curves: Some(Phy::CURVE_SECP256K1),
+            enabled_usb_itf: Some(Phy::ITF_ALL),
+            led_driver: Some(5),
+            led_order: Some(2),
+        };
+        let bytes = serialize_phy(&p).unwrap();
+        // VID/PID big-endian, as phy_serialize_data writes them
+        assert_eq!(&bytes[..6], &[0x00, 4, 0x2E, 0x8A, 0x10, 0xFE]);
+        assert_eq!(parse_phy(&bytes), p);
+        // truncated input must not panic
+        assert_eq!(parse_phy(&bytes[..3]).vid, None);
+        assert!(serialize_phy(&Phy { enabled_usb_itf: Some(Phy::ITF_KB), ..p.clone() }).is_err());
+        assert!(serialize_phy(&Phy { usb_product: Some("x".repeat(32)), ..p }).is_err());
+    }
+
+    #[test]
+    fn flash_parsing() {
+        let d: Vec<u8> = [1u32, 2, 3, 4, 5, 6].iter().flat_map(|v| v.to_be_bytes()).collect();
+        let f = parse_flash(&d).unwrap();
+        assert_eq!((f.free, f.used, f.total, f.files, f.size, f.firmware), (1, 2, 3, 4, 5, Some(6)));
+        assert!(parse_flash(&d[..10]).is_none());
+    }
+
+    /// `cargo test -p picokeys-app -- --ignored probe_rescue --nocapture`
+    #[test]
+    #[ignore]
+    fn probe_rescue() {
+        println!("{:#?}", info().unwrap());
+    }
+}

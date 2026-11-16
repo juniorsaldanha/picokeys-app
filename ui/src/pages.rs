@@ -14,7 +14,7 @@ use crate::ui::skeleton::Skeleton;
 use crate::ui::spinner::Spinner;
 
 #[component]
-fn PageHeader(title: &'static str, subtitle: &'static str, children: Element) -> Element {
+pub fn PageHeader(title: &'static str, subtitle: &'static str, children: Element) -> Element {
     rsx! {
         div { class: "mb-6 flex items-end justify-between gap-4",
             div {
@@ -27,7 +27,7 @@ fn PageHeader(title: &'static str, subtitle: &'static str, children: Element) ->
 }
 
 #[component]
-fn ErrorBox(title: String, msg: String) -> Element {
+pub fn ErrorBox(title: String, msg: String) -> Element {
     rsx! {
         Alert { variant: AlertVariant::Destructive, class: "animate-in fade-in",
             TriangleAlert {}
@@ -38,7 +38,7 @@ fn ErrorBox(title: String, msg: String) -> Element {
 }
 
 /// Friendly text for the CTAP errors people actually hit.
-fn humanize(e: &str) -> String {
+pub fn humanize(e: &str) -> String {
     let l = e.to_lowercase();
     if l.contains("pin_invalid") || l.contains("0x31") {
         "Wrong PIN.".into()

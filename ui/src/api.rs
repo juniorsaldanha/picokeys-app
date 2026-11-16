@@ -70,3 +70,19 @@ extern "C" {
     #[wasm_bindgen(js_name = setTimeout)]
     fn web_sys_set_timeout(f: &js_sys::Function, ms: i32);
 }
+
+pub async fn pico_info() -> Result<types::PicoInfo, String> {
+    call("pico_info", NONE).await
+}
+
+#[derive(Serialize)]
+struct PhyArgs<'a> {
+    phy: &'a types::Phy,
+}
+pub async fn write_phy(phy: &types::Phy) -> Result<(), String> {
+    call("write_phy", PhyArgs { phy }).await
+}
+
+pub async fn fido_reset(path: &str) -> Result<(), String> {
+    call("fido_reset", Args { path: Some(path), ..NONE }).await
+}
