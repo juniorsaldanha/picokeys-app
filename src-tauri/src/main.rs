@@ -1,7 +1,9 @@
 // Prevents an extra console window on Windows in release.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod admin;
 mod agent;
+mod audit;
 mod blobs;
 mod ctap;
 mod fido;
@@ -46,12 +48,20 @@ async fn fido_info(path: String) -> Result<FidoInfo, String> {
 
 #[tauri::command]
 async fn set_pin(path: String, new_pin: String) -> Result<(), String> {
-    blocking(move || fido::set_pin(&path, &new_pin)).await
+    let detail = String::new();
+    audit::log("set_pin", &detail, async move {
+        blocking(move || fido::set_pin(&path, &new_pin)).await
+    }
+    .await)
 }
 
 #[tauri::command]
 async fn change_pin(path: String, current: String, new_pin: String) -> Result<(), String> {
-    blocking(move || fido::change_pin(&path, &current, &new_pin)).await
+    let detail = String::new();
+    audit::log("change_pin", &detail, async move {
+        blocking(move || fido::change_pin(&path, &current, &new_pin)).await
+    }
+    .await)
 }
 
 #[tauri::command]
@@ -61,7 +71,12 @@ async fn list_passkeys(path: String, pin: String) -> Result<Vec<Passkey>, String
 
 #[tauri::command]
 async fn delete_passkey(path: String, pin: String, cred_id: String) -> Result<(), String> {
-    blocking(move || fido::delete_passkey(&path, &pin, &cred_id)).await
+    let detail = cred_id.clone();
+    audit::log("delete_passkey", &detail, async move {
+        admin::require()?;
+        blocking(move || fido::delete_passkey(&path, &pin, &cred_id)).await
+    }
+    .await)
 }
 
 #[tauri::command]
@@ -76,30 +91,45 @@ async fn pico_info() -> Result<PicoInfo, String> {
 
 #[tauri::command]
 async fn write_phy(phy: Phy) -> Result<(), String> {
-    blocking(move || pico::write_phy(&phy)).await
+    let detail = format!("{phy:?}");
+    audit::log("write_phy", &detail, async move {
+        admin::require()?;
+        blocking(move || pico::write_phy(&phy)).await
+    }
+    .await)
 }
 
 #[tauri::command]
 async fn fido_reset(path: String) -> Result<(), String> {
-    blocking(move || pico::fido_reset(&path)).await
+    let detail = String::new();
+    audit::log("fido_reset", &detail, async move {
+        admin::require()?;
+        blocking(move || pico::fido_reset(&path)).await
+    }
+    .await)
 }
 
 #[tauri::command]
 async fn fido_policy(path: String, pin: String, change: FidoPolicy) -> Result<(), String> {
-    blocking(move || {
-        let (p, n) = (path.as_str(), pin.as_str());
-        match change {
-            FidoPolicy::AlwaysUv => ctap::toggle_always_uv(p, n),
-            FidoPolicy::EnterpriseAttestation => ctap::enable_enterprise_attestation(p, n),
-            FidoPolicy::MinPin { len, rp_ids, force_change } => ctap::set_min_pin(p, n, len, &rp_ids, force_change),
-            FidoPolicy::Toggle { which } => ctap::toggle(p, n, &which),
-            FidoPolicy::PinComplexity { bits } => ctap::pin_policy(p, n, bits),
-            FidoPolicy::Revoke { cred_id } => ctap::revoke(p, n, &cred_id),
-            FidoPolicy::Expire { cred_id, unix } => ctap::expire(p, n, &cred_id, unix),
-            FidoPolicy::Touch { cred_id, required } => ctap::button(p, n, &cred_id, required),
-        }
-    })
-    .await
+    let detail = format!("{change:?}");
+    audit::log("fido_policy", &detail, async move {
+        admin::require()?;
+        blocking(move || {
+            let (p, n) = (path.as_str(), pin.as_str());
+            match change {
+                FidoPolicy::AlwaysUv => ctap::toggle_always_uv(p, n),
+                FidoPolicy::EnterpriseAttestation => ctap::enable_enterprise_attestation(p, n),
+                FidoPolicy::MinPin { len, rp_ids, force_change } => ctap::set_min_pin(p, n, len, &rp_ids, force_change),
+                FidoPolicy::Toggle { which } => ctap::toggle(p, n, &which),
+                FidoPolicy::PinComplexity { bits } => ctap::pin_policy(p, n, bits),
+                FidoPolicy::Revoke { cred_id } => ctap::revoke(p, n, &cred_id),
+                FidoPolicy::Expire { cred_id, unix } => ctap::expire(p, n, &cred_id, unix),
+                FidoPolicy::Touch { cred_id, required } => ctap::button(p, n, &cred_id, required),
+            }
+        })
+        .await
+    }
+    .await)
 }
 
 #[tauri::command]
@@ -109,7 +139,12 @@ async fn large_blobs(path: String, pin: String) -> Result<LargeBlobs, String> {
 
 #[tauri::command]
 async fn large_blob_delete(path: String, pin: String, index: u32) -> Result<(), String> {
-    blocking(move || blobs::delete(&path, &pin, index)).await
+    let detail = format!("entry {index}");
+    audit::log("large_blob_delete", &detail, async move {
+        admin::require()?;
+        blocking(move || blobs::delete(&path, &pin, index)).await
+    }
+    .await)
 }
 
 #[tauri::command]
@@ -120,14 +155,18 @@ async fn agent_status() -> Result<AgentStatus, String> {
 /// Start (with an optional PIN for keys that need it) or stop the built-in ssh-agent.
 #[tauri::command]
 async fn agent_set(running: bool, pin: Option<String>) -> Result<AgentStatus, String> {
-    if running {
-        agent::set_pin(pin);
-        agent::start()?;
-    } else {
-        agent::stop()?;
-        agent::set_pin(None);
+    let detail = format!("running={running}");
+    audit::log("agent_set", &detail, async move {
+        if running {
+            agent::set_pin(pin);
+            agent::start()?;
+        } else {
+            agent::stop()?;
+            agent::set_pin(None);
+        }
+        agent::status()
     }
-    agent::status()
+    .await)
 }
 
 #[tauri::command]
@@ -139,17 +178,22 @@ async fn recovery_files() -> Result<Vec<types::RecoveryFile>, String> {
 /// acknowledgement in the UI; the backend refuses without it. Ok(None) = cancelled.
 #[tauri::command]
 async fn recovery_export(app: tauri::AppHandle, path: String, understood: bool) -> Result<Option<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
-    if !understood {
-        return Err("Confirm that you understand what this file is first.".into());
+    let detail = path.clone();
+    audit::log("recovery_export", &detail, async move {
+        admin::require()?;
+        use tauri_plugin_dialog::DialogExt;
+        if !understood {
+            return Err("Confirm that you understand what this file is first.".into());
+        }
+        let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let dest = tauri::async_runtime::spawn_blocking(move || app.dialog().file().set_file_name(name).blocking_save_file())
+            .await
+            .map_err(|e| e.to_string())?;
+        let Some(dest) = dest.and_then(|d| d.into_path().ok()) else { return Ok(None) };
+        recovery::export(&path, &dest)?;
+        Ok(Some(dest.display().to_string()))
     }
-    let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let dest = tauri::async_runtime::spawn_blocking(move || app.dialog().file().set_file_name(name).blocking_save_file())
-        .await
-        .map_err(|e| e.to_string())?;
-    let Some(dest) = dest.and_then(|d| d.into_path().ok()) else { return Ok(None) };
-    recovery::export(&path, &dest)?;
-    Ok(Some(dest.display().to_string()))
+    .await)
 }
 
 #[tauri::command]
@@ -159,25 +203,42 @@ async fn pgp_status() -> Result<types::PgpStatus, String> {
 
 #[tauri::command]
 async fn pgp_change_pin(admin: bool, old: String, new: String) -> Result<(), String> {
-    blocking(move || pgp::change_pin(admin, &old, &new)).await
+    let detail = (if admin { "Admin PIN" } else { "PIN" }).to_string();
+    audit::log("pgp_change_pin", &detail, async move {
+        blocking(move || pgp::change_pin(admin, &old, &new)).await
+    }
+    .await)
 }
 
 #[tauri::command]
 async fn pgp_reset_pin(admin_pin: String, new: String) -> Result<(), String> {
-    blocking(move || pgp::reset_pin(&admin_pin, &new)).await
+    let detail = String::new();
+    audit::log("pgp_reset_pin", &detail, async move {
+        blocking(move || pgp::reset_pin(&admin_pin, &new)).await
+    }
+    .await)
 }
 
 #[tauri::command]
 async fn pgp_set_cardholder(admin_pin: String, name: String, url: String) -> Result<(), String> {
-    blocking(move || pgp::set_cardholder(&admin_pin, &name, &url)).await
+    let detail = name.clone();
+    audit::log("pgp_set_cardholder", &detail, async move {
+        blocking(move || pgp::set_cardholder(&admin_pin, &name, &url)).await
+    }
+    .await)
 }
 
 #[tauri::command]
 async fn pgp_factory_reset(admin_pin: Option<String>, confirm: String) -> Result<(), String> {
-    if confirm != "RESET OPENPGP" {
-        return Err("Confirmation phrase didn't match.".into());
+    let detail = String::new();
+    audit::log("pgp_factory_reset", &detail, async move {
+        admin::require()?;
+        if confirm != "RESET OPENPGP" {
+            return Err("Confirmation phrase didn't match.".into());
+        }
+        blocking(move || pgp::factory_reset(admin_pin.as_deref())).await
     }
-    blocking(move || pgp::factory_reset(admin_pin.as_deref())).await
+    .await)
 }
 
 #[tauri::command]
@@ -187,35 +248,87 @@ async fn hsm_status() -> Result<types::HsmStatus, String> {
 
 #[tauri::command]
 async fn hsm_change_pin(so: bool, old: String, new: String) -> Result<(), String> {
-    blocking(move || hsm::change_pin(so, &old, &new)).await
+    let detail = (if so { "SO-PIN" } else { "PIN" }).to_string();
+    audit::log("hsm_change_pin", &detail, async move {
+        blocking(move || hsm::change_pin(so, &old, &new)).await
+    }
+    .await)
 }
 
 #[tauri::command]
 async fn hsm_unblock(so_pin: String, new: String) -> Result<(), String> {
-    blocking(move || hsm::unblock(&so_pin, &new)).await
+    let detail = String::new();
+    audit::log("hsm_unblock", &detail, async move {
+        blocking(move || hsm::unblock(&so_pin, &new)).await
+    }
+    .await)
 }
 
 #[tauri::command]
 async fn hsm_initialize(pin: String, so_pin: String, retries: u8, confirm: String) -> Result<(), String> {
-    blocking(move || {
-        // Re-initializing erases keys: then the typed phrase is required. First-time setup isn't.
-        if confirm != "ERASE HSM" && hsm::status()?.initialized {
-            return Err("Confirmation phrase didn't match.".into());
-        }
-        hsm::initialize(&pin, &so_pin, retries)
-    })
-    .await
+    let detail = String::new();
+    audit::log("hsm_initialize", &detail, async move {
+        admin::require()?;
+        blocking(move || {
+            // Re-initializing erases keys: then the typed phrase is required. First-time setup isn't.
+            if confirm != "ERASE HSM" && hsm::status()?.initialized {
+                return Err("Confirmation phrase didn't match.".into());
+            }
+            hsm::initialize(&pin, &so_pin, retries)
+        })
+        .await
+    }
+    .await)
 }
 
 #[tauri::command]
 async fn hsm_delete_key(pin: String, id: u8) -> Result<(), String> {
-    blocking(move || hsm::delete_key(&pin, id)).await
+    let detail = format!("key {id}");
+    audit::log("hsm_delete_key", &detail, async move {
+        admin::require()?;
+        blocking(move || hsm::delete_key(&pin, id)).await
+    }
+    .await)
 }
 
 /// Not under the device lock: it only reads the screen.
 #[tauri::command]
 async fn oath_scan_screen() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(oath::scan_screen).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn admin_status() -> Result<types::AdminStatus, String> {
+    admin::status()
+}
+
+/// PBKDF2 is slow on purpose: keep it off the async threads.
+#[tauri::command]
+async fn admin_unlock(pass: String) -> Result<(), String> {
+    let r = tauri::async_runtime::spawn_blocking(move || admin::unlock(&pass)).await.map_err(|e| e.to_string())?;
+    audit::log("admin_unlock", "", r)
+}
+
+#[tauri::command]
+async fn admin_lock() {
+    admin::lock()
+}
+
+#[tauri::command]
+async fn admin_set(current: Option<String>, new: String) -> Result<(), String> {
+    let r = tauri::async_runtime::spawn_blocking(move || admin::set(current.as_deref(), &new)).await.map_err(|e| e.to_string())?;
+    audit::log("admin_set", "", r)
+}
+
+#[tauri::command]
+async fn admin_remove(current: String) -> Result<(), String> {
+    let r = tauri::async_runtime::spawn_blocking(move || admin::remove(&current)).await.map_err(|e| e.to_string())?;
+    audit::log("admin_remove", "", r)
+}
+
+#[tauri::command]
+async fn audit_log() -> Result<types::AuditLog, String> {
+    tauri::async_runtime::spawn_blocking(audit::load).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -231,6 +344,17 @@ async fn pico_sync_time() -> Result<(), String> {
 /// Saves an export into ~/Downloads without overwriting; returns the path.
 #[tauri::command]
 async fn save_text(name: String, content: String) -> Result<String, String> {
+    save_download(&name, content.as_bytes())
+}
+
+/// Copies the raw audit log (with its hashes, so the copy stays verifiable) into ~/Downloads.
+#[tauri::command]
+async fn audit_export() -> Result<String, String> {
+    let raw = std::fs::read(audit::path()?).map_err(|_| "The audit log is empty.".to_string())?;
+    save_download("pico-key-manager-audit.log", &raw)
+}
+
+fn save_download(name: &str, content: &[u8]) -> Result<String, String> {
     let name: String = name.chars().filter(|c| c.is_ascii_alphanumeric() || "-_.".contains(*c)).collect();
     let (stem, ext) = name.rsplit_once('.').unwrap_or((&name, "txt"));
     let dir = ssh::home()?.join("Downloads");
@@ -257,7 +381,11 @@ async fn oath_calculate(name: String) -> Result<String, String> {
 
 #[tauri::command]
 async fn oath_add(account: NewOath) -> Result<(), String> {
-    blocking(move || oath::add(&account)).await
+    let detail = format!("{} {}", account.issuer, account.account);
+    audit::log("oath_add", &detail, async move {
+        blocking(move || oath::add(&account)).await
+    }
+    .await)
 }
 
 #[tauri::command]
@@ -277,17 +405,31 @@ async fn oath_protected() -> Result<bool, String> {
 
 #[tauri::command]
 async fn oath_set_password(password: Option<String>) -> Result<(), String> {
-    blocking(move || oath::set_password(password.as_deref())).await
+    let detail = (if password.is_some() { "set" } else { "removed" }).to_string();
+    audit::log("oath_set_password", &detail, async move {
+        admin::require()?;
+        blocking(move || oath::set_password(password.as_deref())).await
+    }
+    .await)
 }
 
 #[tauri::command]
 async fn oath_rename(old: String, new: String) -> Result<(), String> {
-    blocking(move || oath::rename(&old, &new)).await
+    let detail = format!("{old} → {new}");
+    audit::log("oath_rename", &detail, async move {
+        blocking(move || oath::rename(&old, &new)).await
+    }
+    .await)
 }
 
 #[tauri::command]
 async fn oath_delete(name: String) -> Result<(), String> {
-    blocking(move || oath::delete(&name)).await
+    let detail = name.clone();
+    audit::log("oath_delete", &detail, async move {
+        admin::require()?;
+        blocking(move || oath::delete(&name)).await
+    }
+    .await)
 }
 
 #[tauri::command]
@@ -297,17 +439,31 @@ async fn otp_status() -> Result<Vec<OtpSlot>, String> {
 
 #[tauri::command]
 async fn otp_configure(slot: u8, config: NewOtp) -> Result<(), String> {
-    blocking(move || otp::configure(slot, &config)).await
+    let detail = format!("slot {slot}");
+    audit::log("otp_configure", &detail, async move {
+        admin::require()?;
+        blocking(move || otp::configure(slot, &config)).await
+    }
+    .await)
 }
 
 #[tauri::command]
 async fn otp_delete(slot: u8) -> Result<(), String> {
-    blocking(move || otp::delete(slot)).await
+    let detail = format!("slot {slot}");
+    audit::log("otp_delete", &detail, async move {
+        admin::require()?;
+        blocking(move || otp::delete(slot)).await
+    }
+    .await)
 }
 
 #[tauri::command]
 async fn otp_swap() -> Result<(), String> {
-    blocking(otp::swap).await
+    let detail = String::new();
+    audit::log("otp_swap", &detail, async move {
+        blocking(otp::swap).await
+    }
+    .await)
 }
 
 #[tauri::command]
@@ -322,11 +478,16 @@ async fn fw_releases(product: String) -> Result<Vec<FwRelease>, String> {
 
 #[tauri::command]
 async fn fw_flash(app: tauri::AppHandle, url: String, board: Board) -> Result<(), String> {
-    use tauri::Emitter;
-    blocking(move || firmware::flash(&url, board, &mut |p: FlashProgress| {
-        let _ = app.emit("flash-progress", p);
-    }))
-    .await
+    let detail = url.clone();
+    audit::log("fw_flash", &detail, async move {
+        admin::require()?;
+        use tauri::Emitter;
+        blocking(move || firmware::flash(&url, board, &mut |p: FlashProgress| {
+            let _ = app.emit("flash-progress", p);
+        }))
+        .await
+    }
+    .await)
 }
 
 #[tauri::command]
@@ -336,7 +497,11 @@ async fn ssh_env() -> Result<SshEnv, String> {
 
 #[tauri::command]
 async fn ssh_install_openssh() -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(ssh::install_openssh).await.map_err(|e| e.to_string())?
+    let detail = String::new();
+    audit::log("ssh_install_openssh", &detail, async move {
+        tauri::async_runtime::spawn_blocking(ssh::install_openssh).await.map_err(|e| e.to_string())?
+    }
+    .await)
 }
 
 #[tauri::command]
@@ -346,22 +511,38 @@ async fn ssh_keys() -> Result<Vec<SshKey>, String> {
 
 #[tauri::command]
 async fn ssh_generate(key: NewSshKey) -> Result<SshKey, String> {
-    blocking(move || ssh::generate(&key)).await
+    let detail = String::new();
+    audit::log("ssh_generate", &detail, async move {
+        blocking(move || ssh::generate(&key)).await
+    }
+    .await)
 }
 
 #[tauri::command]
 async fn ssh_recover(pin: Option<String>) -> Result<Vec<SshKey>, String> {
-    blocking(move || ssh::recover(pin.as_deref())).await
+    let detail = String::new();
+    audit::log("ssh_recover", &detail, async move {
+        blocking(move || ssh::recover(pin.as_deref())).await
+    }
+    .await)
 }
 
 #[tauri::command]
 async fn ssh_git_setup(setup: GitSetup) -> Result<GitSigning, String> {
-    tauri::async_runtime::spawn_blocking(move || ssh::setup_git(&setup)).await.map_err(|e| e.to_string())?
+    let detail = String::new();
+    audit::log("ssh_git_setup", &detail, async move {
+        tauri::async_runtime::spawn_blocking(move || ssh::setup_git(&setup)).await.map_err(|e| e.to_string())?
+    }
+    .await)
 }
 
 #[tauri::command]
 async fn ssh_add_host(host: String, key: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || ssh::add_host(&host, &key)).await.map_err(|e| e.to_string())?
+    let detail = host.clone();
+    audit::log("ssh_add_host", &detail, async move {
+        tauri::async_runtime::spawn_blocking(move || ssh::add_host(&host, &key)).await.map_err(|e| e.to_string())?
+    }
+    .await)
 }
 
 #[tauri::command]
@@ -376,7 +557,11 @@ async fn ssh_inventory() -> Result<Vec<LegacyKey>, String> {
 
 #[tauri::command]
 async fn ssh_authorize(host: String, key: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || migrate::authorize(&host, &key)).await.map_err(|e| e.to_string())?
+    let detail = host.clone();
+    audit::log("ssh_authorize", &detail, async move {
+        tauri::async_runtime::spawn_blocking(move || migrate::authorize(&host, &key)).await.map_err(|e| e.to_string())?
+    }
+    .await)
 }
 
 #[tauri::command]
@@ -386,12 +571,22 @@ async fn ssh_check(host: String, key: String, pin: Option<String>) -> Result<Str
 
 #[tauri::command]
 async fn ssh_switch_config(old: String, key: String) -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || migrate::switch_config(&old, &key)).await.map_err(|e| e.to_string())?
+    let detail = old.clone();
+    audit::log("ssh_switch_config", &detail, async move {
+        admin::require()?;
+        tauri::async_runtime::spawn_blocking(move || migrate::switch_config(&old, &key)).await.map_err(|e| e.to_string())?
+    }
+    .await)
 }
 
 #[tauri::command]
 async fn ssh_archive(old: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || migrate::archive(&old)).await.map_err(|e| e.to_string())?
+    let detail = old.clone();
+    audit::log("ssh_archive", &detail, async move {
+        admin::require()?;
+        tauri::async_runtime::spawn_blocking(move || migrate::archive(&old)).await.map_err(|e| e.to_string())?
+    }
+    .await)
 }
 
 fn main() {
@@ -402,6 +597,13 @@ fn main() {
             pico_info, write_phy, fido_reset,
             fido_policy,
             pico_time,
+            admin_status,
+            admin_unlock,
+            admin_lock,
+            admin_set,
+            admin_remove,
+            audit_log,
+            audit_export,
             oath_scan_screen,
             hsm_status,
             hsm_change_pin,

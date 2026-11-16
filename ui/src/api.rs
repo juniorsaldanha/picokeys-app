@@ -17,6 +17,20 @@ async fn call<A: Serialize, T: DeserializeOwned>(cmd: &str, args: A) -> Result<T
     serde_wasm_bindgen::from_value(v).map_err(|e| e.to_string())
 }
 
+/// Set when a risky action hit the app admin lock; the root shows the unlock dialog.
+pub static ADMIN_PROMPT: dioxus::prelude::GlobalSignal<bool> = dioxus::prelude::Signal::global(|| false);
+
+/// `call` for commands the admin lock can refuse.
+async fn guarded<A: Serialize, T: DeserializeOwned>(cmd: &str, args: A) -> Result<T, String> {
+    match call(cmd, args).await {
+        Err(e) if e == "ADMIN_LOCKED" => {
+            *ADMIN_PROMPT.write() = true;
+            Err("Needs the admin passphrase. Unlock in the dialog, then try again.".into())
+        }
+        r => r,
+    }
+}
+
 // Tauri maps snake_case Rust args to camelCase JS keys.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,7 +65,7 @@ pub async fn list_passkeys(path: &str, pin: &str) -> Result<Vec<Passkey>, String
     call("list_passkeys", Args { path: Some(path), pin: Some(pin), ..NONE }).await
 }
 pub async fn delete_passkey(path: &str, pin: &str, cred_id: &str) -> Result<(), String> {
-    call("delete_passkey", Args { path: Some(path), pin: Some(pin), cred_id: Some(cred_id), ..NONE }).await
+    guarded("delete_passkey", Args { path: Some(path), pin: Some(pin), cred_id: Some(cred_id), ..NONE }).await
 }
 pub async fn wink(path: &str) -> Result<(), String> {
     call("wink", Args { path: Some(path), ..NONE }).await
@@ -80,11 +94,11 @@ struct PhyArgs<'a> {
     phy: &'a types::Phy,
 }
 pub async fn write_phy(phy: &types::Phy) -> Result<(), String> {
-    call("write_phy", PhyArgs { phy }).await
+    guarded("write_phy", PhyArgs { phy }).await
 }
 
 pub async fn fido_reset(path: &str) -> Result<(), String> {
-    call("fido_reset", Args { path: Some(path), ..NONE }).await
+    guarded("fido_reset", Args { path: Some(path), ..NONE }).await
 }
 
 #[derive(Serialize)]
@@ -98,7 +112,7 @@ pub async fn oath_calculate(name: &str) -> Result<String, String> {
     call("oath_calculate", NameArgs { name }).await
 }
 pub async fn oath_delete(name: &str) -> Result<(), String> {
-    call("oath_delete", NameArgs { name }).await
+    guarded("oath_delete", NameArgs { name }).await
 }
 #[derive(Serialize)]
 struct AddArgs<'a> {
@@ -133,10 +147,10 @@ pub async fn otp_status() -> Result<Vec<types::OtpSlot>, String> {
     call("otp_status", NONE).await
 }
 pub async fn otp_configure(slot: u8, config: &types::NewOtp) -> Result<(), String> {
-    call("otp_configure", SlotArgs { slot, config: Some(config) }).await
+    guarded("otp_configure", SlotArgs { slot, config: Some(config) }).await
 }
 pub async fn otp_delete(slot: u8) -> Result<(), String> {
-    call("otp_delete", SlotArgs { slot, config: None }).await
+    guarded("otp_delete", SlotArgs { slot, config: None }).await
 }
 pub async fn otp_swap() -> Result<(), String> {
     call("otp_swap", NONE).await
@@ -162,7 +176,7 @@ struct FlashArgs<'a> {
     board: types::Board,
 }
 pub async fn fw_flash(url: &str, board: types::Board) -> Result<(), String> {
-    call("fw_flash", FlashArgs { url, board }).await
+    guarded("fw_flash", FlashArgs { url, board }).await
 }
 
 #[wasm_bindgen]
@@ -257,10 +271,10 @@ struct OldArgs<'a> {
     key: Option<&'a str>,
 }
 pub async fn ssh_switch_config(old: &str, key: &str) -> Result<Vec<String>, String> {
-    call("ssh_switch_config", OldArgs { old, key: Some(key) }).await
+    guarded("ssh_switch_config", OldArgs { old, key: Some(key) }).await
 }
 pub async fn ssh_archive(old: &str) -> Result<String, String> {
-    call("ssh_archive", OldArgs { old, key: None }).await
+    guarded("ssh_archive", OldArgs { old, key: None }).await
 }
 
 #[derive(Serialize)]
@@ -270,7 +284,7 @@ struct PolicyArgs<'a> {
     change: &'a types::FidoPolicy,
 }
 pub async fn fido_policy(path: &str, pin: &str, change: &types::FidoPolicy) -> Result<(), String> {
-    call("fido_policy", PolicyArgs { path, pin, change }).await
+    guarded("fido_policy", PolicyArgs { path, pin, change }).await
 }
 pub async fn pico_time() -> Result<Option<u32>, String> {
     call("pico_time", NONE).await
@@ -298,7 +312,7 @@ struct BlobDel<'a> {
     index: u32,
 }
 pub async fn large_blob_delete(path: &str, pin: &str, index: u32) -> Result<(), String> {
-    call("large_blob_delete", BlobDel { path, pin, index }).await
+    guarded("large_blob_delete", BlobDel { path, pin, index }).await
 }
 
 #[derive(Serialize)]
@@ -316,7 +330,7 @@ pub async fn oath_protected() -> Result<bool, String> {
 }
 /// None removes the password.
 pub async fn oath_set_password(password: Option<&str>) -> Result<(), String> {
-    call("oath_set_password", PwArgs { password }).await
+    guarded("oath_set_password", PwArgs { password }).await
 }
 #[derive(Serialize)]
 struct RenameArgs<'a> {
@@ -349,7 +363,7 @@ struct ExportArgs<'a> {
 }
 /// Save-as dialog; Ok(None) when the user cancels.
 pub async fn recovery_export(path: &str, understood: bool) -> Result<Option<String>, String> {
-    call("recovery_export", ExportArgs { path, understood }).await
+    guarded("recovery_export", ExportArgs { path, understood }).await
 }
 
 pub async fn pgp_status() -> Result<types::PgpStatus, String> {
@@ -390,7 +404,7 @@ struct PgpResetArgs<'a> {
     confirm: &'a str,
 }
 pub async fn pgp_factory_reset(admin_pin: Option<&str>, confirm: &str) -> Result<(), String> {
-    call("pgp_factory_reset", PgpResetArgs { admin_pin, confirm }).await
+    guarded("pgp_factory_reset", PgpResetArgs { admin_pin, confirm }).await
 }
 
 pub async fn hsm_status() -> Result<types::HsmStatus, String> {
@@ -424,7 +438,7 @@ struct HsmInitArgs<'a> {
 }
 /// Wipes the HSM. `confirm` must be "ERASE HSM" when it's already initialized.
 pub async fn hsm_initialize(pin: &str, so_pin: &str, retries: u8, confirm: &str) -> Result<(), String> {
-    call("hsm_initialize", HsmInitArgs { pin, so_pin, retries, confirm }).await
+    guarded("hsm_initialize", HsmInitArgs { pin, so_pin, retries, confirm }).await
 }
 #[derive(Serialize)]
 struct HsmDeleteArgs<'a> {
@@ -432,10 +446,45 @@ struct HsmDeleteArgs<'a> {
     id: u8,
 }
 pub async fn hsm_delete_key(pin: &str, id: u8) -> Result<(), String> {
-    call("hsm_delete_key", HsmDeleteArgs { pin, id }).await
+    guarded("hsm_delete_key", HsmDeleteArgs { pin, id }).await
 }
 
 /// Looks for an otpauth:// QR code on the screen(s).
 pub async fn oath_scan_screen() -> Result<String, String> {
     call("oath_scan_screen", NONE).await
+}
+
+pub async fn admin_status() -> Result<types::AdminStatus, String> {
+    call("admin_status", NONE).await
+}
+#[derive(Serialize)]
+struct PassArgs<'a> {
+    pass: &'a str,
+}
+pub async fn admin_unlock(pass: &str) -> Result<(), String> {
+    call("admin_unlock", PassArgs { pass }).await
+}
+pub async fn admin_lock() -> Result<(), String> {
+    call("admin_lock", NONE).await
+}
+#[derive(Serialize)]
+struct AdminSetArgs<'a> {
+    current: Option<&'a str>,
+    new: &'a str,
+}
+pub async fn admin_set(current: Option<&str>, new: &str) -> Result<(), String> {
+    call("admin_set", AdminSetArgs { current, new }).await
+}
+#[derive(Serialize)]
+struct CurrentArgs<'a> {
+    current: &'a str,
+}
+pub async fn admin_remove(current: &str) -> Result<(), String> {
+    call("admin_remove", CurrentArgs { current }).await
+}
+pub async fn audit_log() -> Result<types::AuditLog, String> {
+    call("audit_log", NONE).await
+}
+pub async fn audit_export() -> Result<String, String> {
+    call("audit_export", NONE).await
 }

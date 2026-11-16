@@ -1,3 +1,4 @@
+mod admin;
 mod api;
 mod device;
 mod firmware;
@@ -12,7 +13,7 @@ mod ssh;
 mod ui;
 
 use dioxus::prelude::*;
-use icons::{Cpu, FileKey, Vault, Terminal, HardDriveDownload, Hand, KeyRound, LayoutDashboard, RectangleEllipsis, ShieldCheck, Usb};
+use icons::{Cpu, FileKey, UserCog, Vault, Terminal, HardDriveDownload, Hand, KeyRound, LayoutDashboard, RectangleEllipsis, ShieldCheck, Usb};
 use types::{Device, FidoInfo};
 use ui::spinner::Spinner;
 use ui::theme_toggle::ThemeToggle;
@@ -35,6 +36,7 @@ pub enum Page {
     Ssh,
     Pgp,
     Hsm,
+    Admin,
 }
 
 /// App-wide state. Signals are `Copy`, so pages grab this via `use_context`.
@@ -80,6 +82,7 @@ fn App() -> Element {
 
     rsx! {
         document::Stylesheet { href: CSS }
+        admin::AdminPrompt {}
         div { class: "flex h-screen overflow-hidden bg-background text-foreground",
             Sidebar { devices, page }
             main { class: "flex-1 overflow-y-auto",
@@ -97,6 +100,7 @@ fn App() -> Element {
                             Page::Firmware => rsx! { firmware::FirmwarePage {} },
                             Page::Pgp => rsx! { pgp::PgpPage {} },
                             Page::Hsm => rsx! { hsm::HsmPage {} },
+                            Page::Admin => rsx! { admin::AdminPage {} },
                             Page::Ssh => rsx! { ssh::SshPage {} },
                         }
                     }
@@ -179,6 +183,7 @@ fn Sidebar(devices: Signal<Vec<Device>>, page: Signal<Page>) -> Element {
                 NavItem { page, target: Page::Hsm, label: "HSM", icon: rsx! { Vault {} } }
                 NavItem { page, target: Page::Device, label: "Device", icon: rsx! { Cpu {} } }
                 NavItem { page, target: Page::Firmware, label: "Firmware", icon: rsx! { HardDriveDownload {} } }
+                NavItem { page, target: Page::Admin, label: "Admin & audit", icon: rsx! { UserCog {} } }
             }
 
             div { class: "flex-1" }

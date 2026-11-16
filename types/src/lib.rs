@@ -554,3 +554,30 @@ pub struct HsmStatus {
     pub transport_pin: bool,
     pub keys: Vec<HsmKey>,
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct AuditEntry {
+    /// Unix seconds.
+    pub ts: u64,
+    pub action: String,
+    pub detail: String,
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct AuditLog {
+    pub path: String,
+    pub chain_ok: bool,
+    /// Index of the first entry that doesn't chain (edited, removed or inserted around it).
+    pub broken_at: Option<u32>,
+    pub entries: Vec<AuditEntry>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct AdminStatus {
+    pub enabled: bool,
+    /// true when no lock is set or it's unlocked right now.
+    pub unlocked: bool,
+    pub seconds_left: Option<u32>,
+}

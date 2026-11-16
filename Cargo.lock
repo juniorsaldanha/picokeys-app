@@ -4577,6 +4577,7 @@ dependencies = [
  "ring",
  "rqrr",
  "serde",
+ "serde_json",
  "serialport",
  "tauri",
  "tauri-build",
