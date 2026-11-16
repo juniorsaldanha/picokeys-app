@@ -118,6 +118,16 @@ fn check_esp_image(d: &[u8], board: Board) -> R<()> {
     }
 }
 
+/// Partition table offset on both S2 and S3: everything below it is the bootloader.
+const BOOTLOADER_END: u32 = 0x8000;
+
+/// The merged image minus its bootloader region, for chips with secure boot on.
+fn keep_bootloader(d: &[u8]) -> R<&[u8]> {
+    d.get(BOOTLOADER_END as usize..)
+        .filter(|rest| rest.starts_with(&[0xAA, 0x50]))
+        .ok_or_else(|| "This image has no partition table at 0x8000, so it can't be written without replacing the signed bootloader.".into())
+}
+
 struct Progress<'a>(&'a mut dyn FnMut(FlashProgress), u64);
 impl ProgressCallbacks for Progress<'_> {
     fn init(&mut self, _addr: u32, total: usize) {
@@ -155,9 +165,17 @@ fn flash_esp(data: &[u8], board: Board, progress: &mut dyn FnMut(FlashProgress))
     if flasher.chip() != chip {
         return Err(format!("The connected chip is an {}, not an {}.", flasher.chip(), board.label()));
     }
+    // With secure boot on, the ROM only boots a bootloader signed with a burned key, and release
+    // images are unsigned: writing ours over it bricks the key. Keep the (signed) bootloader that's
+    // there and write from the partition table up; the bootloader doesn't verify the app.
+    let secure = flasher.security_info().map_err(|e| format!("Couldn't read the chip's security fuses: {e}"))?.flags & 1 != 0;
+    let (addr, image) = if secure { (BOOTLOADER_END, keep_bootloader(data)?) } else { (0, data) };
+    if secure {
+        progress(FlashProgress { stage: "Secure boot is on: keeping your signed bootloader".into(), done: 0, total: 0 });
+    }
     // The merged image covers bootloader + partition table + app (0x0..~0xB8000); the key's data
     // partition (part0 at 0x200000) is not touched, so passkeys and settings survive.
-    flasher.write_bin_to_flash(0, data, &mut Progress(progress, 0)).map_err(|e| format!("Writing failed: {e}"))?;
+    flasher.write_bin_to_flash(addr, image, &mut Progress(progress, 0)).map_err(|e| format!("Writing failed: {e}"))?;
     progress(FlashProgress { stage: "Restarting".into(), done: 1, total: 1 });
     let _ = flasher.connection().reset_after(true, chip);
     Ok(())
@@ -263,6 +281,11 @@ mod tests {
 
     #[test]
     fn image_checks() {
+        let mut merged = vec![0xFFu8; 0x9000];
+        merged[0x8000..0x8002].copy_from_slice(&[0xAA, 0x50]);
+        assert_eq!(keep_bootloader(&merged).unwrap().len(), 0x1000);
+        assert!(keep_bootloader(&merged[..0x8000]).is_err());
+        assert!(keep_bootloader(&vec![0xFFu8; 0x9000]).is_err());
         let mut esp = vec![0u8; 32];
         esp[0] = 0xE9;
         esp[12] = 9;
