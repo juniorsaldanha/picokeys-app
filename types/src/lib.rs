@@ -534,3 +534,23 @@ pub struct PgpStatus {
     pub kdf: bool,
     pub keys: Vec<PgpKey>,
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct HsmKey {
+    pub id: u8,
+    /// "RSA", "EC", "AES" or "Key"
+    pub kind: String,
+    pub label: Option<String>,
+    pub has_cert: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct HsmStatus {
+    pub version: String,
+    pub initialized: bool,
+    /// None when unknown (already verified this session) or not initialized.
+    pub pin_tries: Option<u8>,
+    pub so_pin_tries: Option<u8>,
+    pub transport_pin: bool,
+    pub keys: Vec<HsmKey>,
+}

@@ -5,6 +5,7 @@ mod agent;
 mod blobs;
 mod ctap;
 mod fido;
+mod hsm;
 mod migrate;
 mod firmware;
 mod oath;
@@ -177,6 +178,38 @@ async fn pgp_factory_reset(admin_pin: Option<String>, confirm: String) -> Result
         return Err("Confirmation phrase didn't match.".into());
     }
     blocking(move || pgp::factory_reset(admin_pin.as_deref())).await
+}
+
+#[tauri::command]
+async fn hsm_status() -> Result<types::HsmStatus, String> {
+    blocking(hsm::status).await
+}
+
+#[tauri::command]
+async fn hsm_change_pin(so: bool, old: String, new: String) -> Result<(), String> {
+    blocking(move || hsm::change_pin(so, &old, &new)).await
+}
+
+#[tauri::command]
+async fn hsm_unblock(so_pin: String, new: String) -> Result<(), String> {
+    blocking(move || hsm::unblock(&so_pin, &new)).await
+}
+
+#[tauri::command]
+async fn hsm_initialize(pin: String, so_pin: String, retries: u8, confirm: String) -> Result<(), String> {
+    blocking(move || {
+        // Re-initializing erases keys: then the typed phrase is required. First-time setup isn't.
+        if confirm != "ERASE HSM" && hsm::status()?.initialized {
+            return Err("Confirmation phrase didn't match.".into());
+        }
+        hsm::initialize(&pin, &so_pin, retries)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn hsm_delete_key(pin: String, id: u8) -> Result<(), String> {
+    blocking(move || hsm::delete_key(&pin, id)).await
 }
 
 #[tauri::command]
@@ -363,6 +396,11 @@ fn main() {
             pico_info, write_phy, fido_reset,
             fido_policy,
             pico_time,
+            hsm_status,
+            hsm_change_pin,
+            hsm_unblock,
+            hsm_initialize,
+            hsm_delete_key,
             pgp_status,
             pgp_change_pin,
             pgp_reset_pin,

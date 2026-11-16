@@ -392,3 +392,45 @@ struct PgpResetArgs<'a> {
 pub async fn pgp_factory_reset(admin_pin: Option<&str>, confirm: &str) -> Result<(), String> {
     call("pgp_factory_reset", PgpResetArgs { admin_pin, confirm }).await
 }
+
+pub async fn hsm_status() -> Result<types::HsmStatus, String> {
+    call("hsm_status", NONE).await
+}
+#[derive(Serialize)]
+struct HsmPinArgs<'a> {
+    so: bool,
+    old: &'a str,
+    new: &'a str,
+}
+pub async fn hsm_change_pin(so: bool, old: &str, new: &str) -> Result<(), String> {
+    call("hsm_change_pin", HsmPinArgs { so, old, new }).await
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HsmUnblockArgs<'a> {
+    so_pin: &'a str,
+    new: &'a str,
+}
+pub async fn hsm_unblock(so_pin: &str, new: &str) -> Result<(), String> {
+    call("hsm_unblock", HsmUnblockArgs { so_pin, new }).await
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HsmInitArgs<'a> {
+    pin: &'a str,
+    so_pin: &'a str,
+    retries: u8,
+    confirm: &'a str,
+}
+/// Wipes the HSM. `confirm` must be "ERASE HSM" when it's already initialized.
+pub async fn hsm_initialize(pin: &str, so_pin: &str, retries: u8, confirm: &str) -> Result<(), String> {
+    call("hsm_initialize", HsmInitArgs { pin, so_pin, retries, confirm }).await
+}
+#[derive(Serialize)]
+struct HsmDeleteArgs<'a> {
+    pin: &'a str,
+    id: u8,
+}
+pub async fn hsm_delete_key(pin: &str, id: u8) -> Result<(), String> {
+    call("hsm_delete_key", HsmDeleteArgs { pin, id }).await
+}

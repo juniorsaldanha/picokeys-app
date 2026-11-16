@@ -1,6 +1,7 @@
 mod api;
 mod device;
 mod firmware;
+mod hsm;
 mod migrate;
 mod oath;
 mod otp;
@@ -11,7 +12,7 @@ mod ssh;
 mod ui;
 
 use dioxus::prelude::*;
-use icons::{Cpu, FileKey, Terminal, HardDriveDownload, Hand, KeyRound, LayoutDashboard, RectangleEllipsis, ShieldCheck, Usb};
+use icons::{Cpu, FileKey, Vault, Terminal, HardDriveDownload, Hand, KeyRound, LayoutDashboard, RectangleEllipsis, ShieldCheck, Usb};
 use types::{Device, FidoInfo};
 use ui::spinner::Spinner;
 use ui::theme_toggle::ThemeToggle;
@@ -33,6 +34,7 @@ pub enum Page {
     Firmware,
     Ssh,
     Pgp,
+    Hsm,
 }
 
 /// App-wide state. Signals are `Copy`, so pages grab this via `use_context`.
@@ -94,6 +96,7 @@ fn App() -> Element {
                             Page::Otp => rsx! { otp::OtpPage {} },
                             Page::Firmware => rsx! { firmware::FirmwarePage {} },
                             Page::Pgp => rsx! { pgp::PgpPage {} },
+                            Page::Hsm => rsx! { hsm::HsmPage {} },
                             Page::Ssh => rsx! { ssh::SshPage {} },
                         }
                     }
@@ -173,6 +176,7 @@ fn Sidebar(devices: Signal<Vec<Device>>, page: Signal<Page>) -> Element {
                 NavItem { page, target: Page::Ssh, label: "SSH & Git", icon: rsx! { Terminal {} } }
                 NavItem { page, target: Page::Otp, label: "OTP slots", icon: rsx! { Hand {} } }
                 NavItem { page, target: Page::Pgp, label: "OpenPGP", icon: rsx! { FileKey {} } }
+                NavItem { page, target: Page::Hsm, label: "HSM", icon: rsx! { Vault {} } }
                 NavItem { page, target: Page::Device, label: "Device", icon: rsx! { Cpu {} } }
                 NavItem { page, target: Page::Firmware, label: "Firmware", icon: rsx! { HardDriveDownload {} } }
             }

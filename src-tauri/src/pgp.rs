@@ -42,7 +42,7 @@ pub(crate) fn ber(d: &[u8]) -> Vec<(u16, &[u8])> {
 }
 
 /// Depth-first search for a tag inside constructed DOs.
-fn find(d: &[u8], tag: u16) -> Option<&[u8]> {
+pub(crate) fn find(d: &[u8], tag: u16) -> Option<&[u8]> {
     for (t, v) in ber(d) {
         if t == tag {
             return Some(v);

@@ -39,7 +39,7 @@ impl Card {
             .ok_or_else(|| "No Pico Key smart-card interface found (is CCID enabled?)".into())
     }
 
-    fn transmit(&self, cmd: &[u8]) -> R<(Vec<u8>, [u8; 2])> {
+    pub(crate) fn transmit(&self, cmd: &[u8]) -> R<(Vec<u8>, [u8; 2])> {
         let mut out = [0u8; pcsc::MAX_BUFFER_SIZE_EXTENDED];
         let rsp = self.0.transmit(cmd, &mut out).map_err(|e| e.to_string())?;
         if rsp.len() < 2 {
