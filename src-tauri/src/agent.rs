@@ -2,6 +2,7 @@
 //! any ssh client (including Apple's, which ships without FIDO middleware) can use the keys.
 //! Unix only: listens on ~/.ssh/pico-agent.sock.
 // ponytail: no Windows named-pipe listener; Windows users use OpenSSH's own sk support.
+#![cfg_attr(not(unix), allow(dead_code))]
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
