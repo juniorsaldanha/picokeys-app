@@ -109,6 +109,15 @@ async fn large_blob_delete(path: String, pin: String, index: u32) -> Result<(), 
 }
 
 #[tauri::command]
+async fn pico_secure_boot(bootkey: u8, lock: bool, confirm: String) -> Result<(), String> {
+    // Second check besides the UI: the exact phrase must come through.
+    if confirm != "ENABLE SECURE BOOT" {
+        return Err("Confirmation phrase didn't match.".into());
+    }
+    blocking(move || pico::enable_secure_boot(bootkey, lock)).await
+}
+
+#[tauri::command]
 async fn pico_time() -> Result<Option<u32>, String> {
     blocking(pico::get_time).await
 }
@@ -291,6 +300,7 @@ fn main() {
             pico_info, write_phy, fido_reset,
             fido_policy,
             pico_time,
+            pico_secure_boot,
             pico_sync_time,
             save_text,
             large_blobs,

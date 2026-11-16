@@ -326,3 +326,14 @@ struct RenameArgs<'a> {
 pub async fn oath_rename(old: &str, new: &str) -> Result<(), String> {
     call("oath_rename", RenameArgs { old, new }).await
 }
+
+#[derive(Serialize)]
+struct SecureArgs<'a> {
+    bootkey: u8,
+    lock: bool,
+    confirm: &'a str,
+}
+/// IRREVERSIBLE fuse burn; `confirm` must be "ENABLE SECURE BOOT".
+pub async fn pico_secure_boot(bootkey: u8, lock: bool, confirm: &str) -> Result<(), String> {
+    call("pico_secure_boot", SecureArgs { bootkey, lock, confirm }).await
+}
