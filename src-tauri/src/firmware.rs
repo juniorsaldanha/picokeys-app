@@ -99,7 +99,35 @@ fn download(url: &str, progress: &mut dyn FnMut(FlashProgress)) -> R<Vec<u8>> {
 
 pub fn flash(url: &str, board: Board, progress: &mut dyn FnMut(FlashProgress)) -> R<()> {
     let data = download(url, progress)?;
+    progress(FlashProgress { stage: "Checking the file's sha256".into(), done: 0, total: 0 });
+    check_sha256(&data, sidecar_sha256(url)?.as_deref(), url.contains("/juniorsaldanha/"))?;
     flash_data(&data, board, progress)
+}
+
+/// The `<asset>.sha256` file published next to a release asset (`sha256sum` format), if any.
+fn sidecar_sha256(url: &str) -> R<Option<String>> {
+    match ureq::get(format!("{url}.sha256")).call() {
+        Ok(mut rsp) => rsp.body_mut().read_to_string().map(Some).map_err(|e| format!("Couldn't read the sha256 file: {e}")),
+        Err(ureq::Error::StatusCode(404)) => Ok(None),
+        Err(e) => Err(format!("Couldn't download the sha256 file: {e}")),
+    }
+}
+
+/// Our releases always ship a .sha256 (`required`); pico-keys' official ones don't, so for those
+/// it's checked only when present.
+fn check_sha256(data: &[u8], sidecar: Option<&str>, required: bool) -> R<()> {
+    let Some(text) = sidecar else {
+        return if required { Err("This release has no .sha256 file, so the download can't be verified.".into()) } else { Ok(()) };
+    };
+    let want = text.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
+    if want.len() != 64 || !want.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("The release's .sha256 file isn't a sha256 checksum.".into());
+    }
+    let got: String = ring::digest::digest(&ring::digest::SHA256, data).as_ref().iter().map(|b| format!("{b:02x}")).collect();
+    if got != want {
+        return Err(format!("The downloaded firmware doesn't match its published sha256 (expected {want}, got {got}). Nothing was written."));
+    }
+    Ok(())
 }
 
 // ---------- ESP32 ----------
@@ -473,6 +501,16 @@ mod tests {
         assert_eq!(clean_log(b"\x1b[0;32mI (55) boot: ok\x1b[0m\r\n"), "I (55) boot: ok\n");
     }
 
+    #[test]
+    fn sha256_sidecar() {
+        let abc = "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD  x.bin\n";
+        assert_eq!(check_sha256(b"abc", Some(abc), true), Ok(()));
+        assert!(check_sha256(b"abd", Some(abc), true).is_err());
+        assert!(check_sha256(b"abc", Some("not a hash"), false).is_err());
+        assert!(check_sha256(b"abc", None, true).is_err());
+        assert_eq!(check_sha256(b"abc", None, false), Ok(()));
+    }
+
     /// Lists releases and validates the real v8.0 images (network, no device).
     /// `cargo test -p picokeys-app -- --ignored official_images --nocapture`
     #[test]
@@ -495,6 +533,7 @@ mod tests {
         let a = rel[0].assets.iter().find(|a| a.board == Board::Esp32S3).expect("ESP32-S3 asset");
         let d = download(&a.url, &mut |_| {}).unwrap();
         assert_eq!(esp_app_only(&d, Board::Esp32S3), Ok(true), "{}", a.name);
+        check_sha256(&d, sidecar_sha256(&a.url).unwrap().as_deref(), true).unwrap();
         assert!(download("https://github.com/someone/else/releases/download/v1/x.bin", &mut |_| {}).is_err());
     }
 }
