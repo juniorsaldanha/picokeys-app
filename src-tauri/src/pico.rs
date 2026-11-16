@@ -22,20 +22,53 @@ const TAG_CURVES: u8 = 0xA;
 const TAG_USB_ITF: u8 = 0xB;
 const TAG_LED_DRIVER: u8 = 0xC;
 
-pub(crate) struct Card(pcsc::Card);
+/// One card session at a time across the whole app: a page refreshing in the middle of a slow
+/// command (RSA key generation takes minutes) would otherwise cut into it.
+static CARD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The guard is declared after the card, so the card disconnects before the lock is released.
+pub(crate) struct Card(pcsc::Card, #[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
+/// Is this reader's card a pico key? (SELECT of the rescue applet answers 9000 or 61xx.)
+fn select_rescue(c: &pcsc::Card) -> R<()> {
+    let mut cmd = vec![0x00, 0xA4, 0x04, 0x00, RESCUE_AID.len() as u8];
+    cmd.extend_from_slice(&RESCUE_AID);
+    cmd.push(0x00);
+    let mut out = [0u8; 258];
+    let rsp = c.transmit(&cmd, &mut out).map_err(|e| e.to_string())?;
+    match rsp {
+        [.., 0x90, 0x00] | [.., 0x61, _] => Ok(()),
+        _ => Err("not a pico key".into()),
+    }
+}
+
+/// Waits for the card session another operation holds, up to `wait`.
+fn card_lock(wait: std::time::Duration) -> R<std::sync::MutexGuard<'static, ()>> {
+    let end = std::time::Instant::now() + wait;
+    loop {
+        match CARD_LOCK.try_lock() {
+            Ok(g) => return Ok(g),
+            Err(std::sync::TryLockError::Poisoned(p)) => return Ok(p.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) if std::time::Instant::now() < end => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Err(_) => return Err("The key is busy with another operation (like making an RSA key). Try again when it finishes.".into()),
+        }
+    }
+}
 
 impl Card {
     /// First reader whose card answers the pico-keys rescue applet. Reader names follow the
     /// (user-changeable) USB product name, so they can't be matched by name.
     // ponytail: first pico-keys reader wins; map HID path <-> reader when multi-key matters.
     pub(crate) fn open() -> R<Self> {
+        let lock = card_lock(std::time::Duration::from_secs(600))?;
         let ctx = Context::establish(Scope::User).map_err(|e| format!("PC/SC unavailable: {e}"))?;
         let mut buf = vec![0u8; ctx.list_readers_len().map_err(|e| e.to_string())?];
         let readers: Vec<CString> = ctx.list_readers(&mut buf).map_err(|e| e.to_string())?.map(|r| r.to_owned()).collect();
         readers
             .iter()
-            .filter_map(|r| ctx.connect(r, ShareMode::Shared, Protocols::ANY).ok().map(Card))
-            .find(|c| c.select().is_ok())
+            .filter_map(|r| ctx.connect(r, ShareMode::Shared, Protocols::ANY).ok())
+            .find(|c| select_rescue(c).is_ok())
+            .map(|c| Card(c, lock))
             .ok_or_else(|| "No Pico Key smart-card interface found (is CCID enabled?)".into())
     }
 

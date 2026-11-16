@@ -390,16 +390,31 @@ fn status_serial(card: &Card) -> String {
 /// Generates a new authentication key on the card (replacing any) and returns its SSH line.
 pub fn ssh_generate(admin_pin: &str, algorithm: &str) -> R<String> {
     let attr = SSH_ALGOS.iter().find(|(n, _)| *n == algorithm).map(|(_, a)| *a).ok_or("Unknown key type.")?;
-    let card = open()?;
+    let mut card = open()?;
     no_kdf(&card)?;
+    let before = auth_key(&card).ok().flatten();
     verify(&card, 0x83, admin_pin)?;
     let mut put = vec![0x00, 0xDA, 0x00, 0xC3, attr.len() as u8];
     put.extend_from_slice(attr);
     card.apdu(&put).map_err(|e| {
         if e.contains("6A80") { "This card's firmware doesn't support that key type.".to_string() } else { e }
     })?;
-    let pk = card.apdu(&ext(0x47, 0x80, 0x00, &[0xA4, 0x00]))?;
-    let key = AuthKey::parse(attr, &pk)?;
+    let key = match card.apdu(&ext(0x47, 0x80, 0x00, &[0xA4, 0x00])) {
+        Ok(pk) => AuthKey::parse(attr, &pk)?,
+        // macOS can drop the session during a minutes-long RSA generation, but the key still gets
+        // made: reconnect, and if the slot holds a new key, finish setting it up.
+        Err(e) => {
+            drop(card);
+            card = open()?;
+            match auth_key(&card)? {
+                Some(k) if Some(&k) != before.as_ref() => {
+                    verify(&card, 0x83, admin_pin)?;
+                    k
+                }
+                _ => return Err(e),
+            }
+        }
+    };
     // fingerprint (C9) and creation time (D0), so gpg --card-status shows the key like one it made
     let created = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as u32).unwrap_or(0);
     for (tag, v) in [(0xC9u8, key.fingerprint(created).to_vec()), (0xD0, created.to_be_bytes().to_vec())] {
