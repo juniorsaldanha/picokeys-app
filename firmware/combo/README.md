@@ -23,6 +23,21 @@ What it changes:
 - OpenPGP's runtime key-container prefixes moved from 0xD0–0xD5 to 0xF0–0xF5
 - one management applet (FIDO's, which also lists OpenPGP/PIV); PIV's `cmd_version` renamed;
   product id stays Pico FIDO
+- `sdk-fixes.patch` on pico-keys-sdk (found on a real ESP32-S3 key; the emulator doesn't run these
+  paths):
+  - flash journal recovery read the redo copy at a raw partition offset, which faults on ESP32
+    (`LoadProhibited` at boot, so any damaged record became a boot loop); it now reads through
+    `flash_read()`, and never runs while a commit is in flight
+  - the journal sector goes below every pending page, not only below `last_base`, and a rescan
+    publishes `last_base` once at the end instead of resetting it to the top first. OpenPGP and
+    PIV rescan the whole flash on select; a commit landing mid-rescan put its journal in (erased)
+    the lowest live data sector, which lost a sector of OpenPGP and FIDO records on a real key
+  - a CTAPHID request that arrives while a CCID command runs (an RSA-4096 keygen takes minutes)
+    is answered `CHANNEL_BUSY` instead of blocking the USB task in `card_exit()`, which also
+    stopped the CCID time extensions so the host gave up
+  - a CCID command sent while one is still running is answered slot-busy instead of being queued
+    behind it (every later answer came one command late), and a late answer carries its own
+    command's sequence number
 - CCID and libcvc on; admin-less PIN mode on for non-ESP builds only (as upstream); the build
   number pinned to the pico-fido checkout's
 

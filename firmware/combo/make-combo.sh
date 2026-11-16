@@ -9,6 +9,9 @@ FIDO=$(cd "$1" && pwd) PGP=$(cd "$2" && pwd) OUT=$3 HERE=$(cd "$(dirname "$0")" 
 mkdir -p "$OUT"
 rsync -a --delete --exclude '/build*' --exclude '.git' "$FIDO"/ "$OUT"/
 rsync -a "$PGP/src/openpgp" "$PGP/src/piv" "$OUT/src/"
+# SDK fixes for running two applets that share the flash (see README): journal recovery on ESP32,
+# journal placement vs. rescans, and CCID/HID requests that arrive while a long command runs
+patch -p1 --forward -d "$OUT/pico-keys-sdk" < "$HERE/sdk-fixes.patch"
 rm "$OUT/src/openpgp/management.c" "$OUT/src/openpgp/management.h"
 sed -i.bak 's/\bcmd_version\b/piv_cmd_version/' "$OUT/src/piv/cmd_version.c" "$OUT/src/piv/piv.h" "$OUT/src/openpgp/piv.c"
 sed -i.bak '/^uint8_t PICO_\(PRODUCT\|VERSION_MAJOR\|VERSION_MINOR\) =/d' "$OUT/src/openpgp/defs.c"
