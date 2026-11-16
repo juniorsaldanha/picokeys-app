@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>{app_title}</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <!-- apply saved/system theme before first paint (no white flash) -->
+        <script>
+            (function () {
+                var s = null; try { s = localStorage.getItem('darkmode'); } catch (e) {}
+                var dark = s === 'true' || (s === null && matchMedia('(prefers-color-scheme: dark)').matches);
+                document.documentElement.classList.toggle('dark', dark);
+                document.documentElement.style.background = dark ? '#121217' : '#fcfcfd';
+            })();
+        </script>
+    </head>
+    <body>
+        <div id="main"></div>
+    </body>
+</html>

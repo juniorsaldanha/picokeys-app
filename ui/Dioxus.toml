@@ -1,0 +1,5 @@
+[application]
+name = "ui"
+
+[web.app]
+title = "Pico Key Manager"

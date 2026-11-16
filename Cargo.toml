@@ -1,0 +1,17 @@
+[workspace]
+members = ["src-tauri", "ui", "types"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+
+# strip only the native binary; wasm-bindgen needs the wasm custom sections
+[profile.release.package.picokeys-app]
+strip = true

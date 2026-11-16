@@ -1,0 +1,14 @@
+[package]
+name = "picokeys-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+ctap-hid-fido2 = "3.6"
+types = { path = "../types" }

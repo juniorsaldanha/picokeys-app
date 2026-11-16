@@ -1,0 +1,6 @@
+/target
+dist/
+/ui/assets/tailwind.css
+/src-tauri/gen
+node_modules
+.DS_Store
