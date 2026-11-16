@@ -209,7 +209,8 @@ fn Cardholder(s: PgpStatus, on_change: EventHandler<()>) -> Element {
     let mut msg = use_signal(|| None::<Result<String, String>>);
     let run = move |_| async move {
         busy.set(true);
-        let r = api::pgp_set_cardholder(&admin.peek(), &name.peek(), &url.peek()).await;
+        let (a, n, u) = (admin.peek().clone(), name.peek().clone(), url.peek().clone());
+        let r = api::pgp_set_cardholder(&a, &n, &u).await;
         if r.is_ok() {
             admin.set(String::new());
         }
@@ -262,7 +263,8 @@ fn Reset(on_change: EventHandler<()>) -> Element {
     let run = move |_| async move {
         busy.set(true);
         let a = admin.peek().clone();
-        let r = api::pgp_factory_reset(Some(a.as_str()).filter(|a| !a.is_empty()), &phrase.peek()).await;
+        let ph = phrase.peek().clone();
+        let r = api::pgp_factory_reset(Some(a.as_str()).filter(|a| !a.is_empty()), &ph).await;
         msg.set(Some(r.map(|_| "OpenPGP was reset. PINs are back to 123456 / 12345678.".into())));
         phrase.set(String::new());
         admin.set(String::new());

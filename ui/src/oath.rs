@@ -464,7 +464,8 @@ fn OathUnlock(on_done: EventHandler<()>) -> Element {
         e.prevent_default();
         busy.set(true);
         error.set(None);
-        match api::oath_unlock(&pw.peek()).await {
+        let p = pw.peek().clone();
+        match api::oath_unlock(&p).await {
             Ok(()) => on_done.call(()),
             Err(e) => error.set(Some(humanize(&e))),
         }

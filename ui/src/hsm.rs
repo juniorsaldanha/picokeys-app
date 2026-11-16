@@ -84,7 +84,8 @@ fn Keys(keys: Vec<HsmKey>, on_change: EventHandler<()>) -> Element {
     let mut confirm = use_signal(|| None::<u8>);
     let mut msg = use_signal(|| None::<Result<String, String>>);
     let del = move |id: u8| async move {
-        let r = api::hsm_delete_key(&pin.peek(), id).await;
+        let p = pin.peek().clone();
+        let r = api::hsm_delete_key(&p, id).await;
         msg.set(Some(r.map(|_| format!("Key {id} deleted."))));
         confirm.set(None);
         on_change.call(());
@@ -210,7 +211,8 @@ fn Initialize(initialized: bool, on_change: EventHandler<()>) -> Element {
     let run = move |_| async move {
         busy.set(true);
         let n = retries.peek().parse().unwrap_or(3);
-        let r = api::hsm_initialize(&pin.peek(), &so.peek(), n, &phrase.peek()).await;
+        let (p, s, ph) = (pin.peek().clone(), so.peek().clone(), phrase.peek().clone());
+        let r = api::hsm_initialize(&p, &s, n, &ph).await;
         msg.set(Some(r.map(|_| "Initialized. Keep the SO-PIN somewhere safe: it's the only way to unblock the PIN.".into())));
         pin.set(String::new());
         pin2.set(String::new());

@@ -42,7 +42,8 @@ fn LockCard(s: AdminStatus, on_change: EventHandler<()>) -> Element {
     let save = move |_| async move {
         busy.set(true);
         let c = current.peek().clone();
-        let r = api::admin_set(enabled.then_some(c.as_str()), &new.peek()).await;
+        let n = new.peek().clone();
+        let r = api::admin_set(enabled.then_some(c.as_str()), &n).await;
         if r.is_ok() {
             current.set(String::new());
             new.set(String::new());
@@ -54,7 +55,8 @@ fn LockCard(s: AdminStatus, on_change: EventHandler<()>) -> Element {
     };
     let remove = move |_| async move {
         busy.set(true);
-        let r = api::admin_remove(&current.peek()).await;
+        let c = current.peek().clone();
+        let r = api::admin_remove(&c).await;
         current.set(String::new());
         msg.set(Some(r.map(|_| "Admin lock removed.".into())));
         busy.set(false);
@@ -187,7 +189,8 @@ pub fn AdminPrompt() -> Element {
     let unlock = move |e: FormEvent| async move {
         e.prevent_default();
         busy.set(true);
-        match api::admin_unlock(&pass.peek()).await {
+        let p = pass.peek().clone(); // a Ref held across the await panics when the dialog writes to `pass`
+        match api::admin_unlock(&p).await {
             Ok(()) => close(),
             Err(e) => err.set(Some(e)),
         }
