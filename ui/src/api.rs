@@ -123,3 +123,29 @@ pub fn copy_text(text: &str) {
         }
     }
 }
+
+#[derive(Serialize)]
+struct SlotArgs<'a> {
+    slot: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config: Option<&'a types::NewOtp>,
+}
+pub async fn otp_status() -> Result<Vec<types::OtpSlot>, String> {
+    call("otp_status", NONE).await
+}
+pub async fn otp_configure(slot: u8, config: &types::NewOtp) -> Result<(), String> {
+    call("otp_configure", SlotArgs { slot, config: Some(config) }).await
+}
+pub async fn otp_delete(slot: u8) -> Result<(), String> {
+    call("otp_delete", SlotArgs { slot, config: None }).await
+}
+pub async fn otp_swap() -> Result<(), String> {
+    call("otp_swap", NONE).await
+}
+#[derive(Serialize)]
+struct BytesArgs {
+    bytes: usize,
+}
+pub async fn random_hex(bytes: usize) -> String {
+    call("random_hex", BytesArgs { bytes }).await.unwrap_or_default()
+}

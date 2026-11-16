@@ -111,11 +111,11 @@ fn alg_name(alg: &str) -> String {
     .into()
 }
 
-fn hex(b: &[u8]) -> String {
+pub(crate) fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-fn unhex(s: &str) -> R<Vec<u8>> {
+pub(crate) fn unhex(s: &str) -> R<Vec<u8>> {
     if s.len() % 2 != 0 {
         return Err("invalid credential id".into());
     }

@@ -248,3 +248,33 @@ mod tests {
         assert_eq!(pct_decode("a%2"), "a%2"); // truncated escape kept as-is
     }
 }
+
+/// What a YubiKey-style OTP slot (short/long touch) is programmed with.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub enum OtpKind {
+    YubicoOtp,
+    Static,
+    ChallengeResponse,
+    YubicoChallenge,
+    Hotp,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct OtpSlot {
+    /// 1 = short touch, 2 = long touch
+    pub slot: u8,
+    pub kind: Option<OtpKind>,
+    /// Needs a touch to run (always true for typed OTPs).
+    pub touch: bool,
+    /// Yubico OTP public ID (modhex).
+    pub public_id: Option<String>,
+}
+
+/// New slot configuration. Keys/IDs are hex (public ID: modhex).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "kind")]
+pub enum NewOtp {
+    YubicoOtp { public_id: String, private_id: String, key: String },
+    Static { password: String, enter: bool },
+    ChallengeResponse { key: String, touch: bool },
+}

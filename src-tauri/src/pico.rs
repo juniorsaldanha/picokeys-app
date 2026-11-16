@@ -49,8 +49,7 @@ impl Card {
     }
 
     pub(crate) fn apdu(&self, cmd: &[u8]) -> R<Vec<u8>> {
-        let (data, sw) = self.transmit(cmd)?;
-        check_sw(sw).map(|_| data)
+        self.apdu_chained(cmd, 0xC0) // ISO GET RESPONSE
     }
 
     /// Follows `61xx` (more data) by sending `INS remaining` until 9000 (YKOATH-style chaining).

@@ -3779,6 +3779,7 @@ name = "picokeys-app"
 version = "0.1.0"
 dependencies = [
  "ctap-hid-fido2",
+ "getrandom 0.3.4",
  "hidapi",
  "pcsc",
  "serde",

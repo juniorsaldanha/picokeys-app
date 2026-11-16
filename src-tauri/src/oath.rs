@@ -38,7 +38,7 @@ fn open() -> R<Card> {
     Ok(card)
 }
 
-fn tlvs(d: &[u8]) -> impl Iterator<Item = (u8, &[u8])> {
+pub(crate) fn tlvs(d: &[u8]) -> impl Iterator<Item = (u8, &[u8])> {
     let mut i = 0;
     std::iter::from_fn(move || {
         let (&tag, &len) = (d.get(i)?, d.get(i + 1)?);

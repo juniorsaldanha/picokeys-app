@@ -13,4 +13,5 @@ serde = { version = "1", features = ["derive"] }
 ctap-hid-fido2 = "3.6"
 types = { path = "../types" }
 pcsc = "2.9.0"
+getrandom = "0.3"
 hidapi = "2"

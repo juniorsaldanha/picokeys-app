@@ -20,6 +20,7 @@ Stack: **Tauri 2** (native shell, Rust backend) + **Dioxus 0.7** (Rust → WASM 
 - Configuration: USB VID/PID and name, interfaces, LED driver/order/GPIO/brightness, button timeout
 - FIDO factory reset
 - Authenticator (OATH): TOTP/HOTP codes, add via otpauth:// link or setup key, touch-required accounts
+- OTP slots (short/long touch): HMAC-SHA1 challenge-response, Yubico OTP, static password; erase, swap
 
 ## Layout
 
