@@ -304,7 +304,11 @@ mod tests {
         let ssh = h.join(".ssh");
         std::fs::create_dir_all(ssh.join("config.d")).unwrap();
         // SAFETY: only this test reads HOME-derived paths; other tests don't touch home().
-        unsafe { std::env::set_var("HOME", &h) };
+        // home_dir() reads USERPROFILE on Windows.
+        unsafe {
+            std::env::set_var("HOME", &h);
+            std::env::set_var("USERPROFILE", &h);
+        }
         std::fs::write(ssh.join("config"), "Include ~/.ssh/config.d/*\n\nHost pve\n\tIdentityFile ~/.ssh/pve.pub\n\nHost other\n  IdentityFile ~/.ssh/keep\n").unwrap();
         std::fs::write(ssh.join("config.d/deploy"), "Host deploy\n    IdentityFile ~/.ssh/pve\n").unwrap();
         std::fs::write(ssh.join("pve.pub"), "ssh-rsa AAAAB3Nza me\n").unwrap();
