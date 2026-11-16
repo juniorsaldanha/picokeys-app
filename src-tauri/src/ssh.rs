@@ -331,6 +331,16 @@ pub fn generate(n: &NewSshKey) -> R<SshKey> {
     keys()?.into_iter().find(|k| Path::new(&k.path) == pub_path).ok_or_else(|| "Key created but couldn't be read back.".into())
 }
 
+/// Retires one of the Pico SSH keys listed by `keys()`: moves the handle and .pub to ~/.ssh/retired.
+pub fn remove(pub_path: &str) -> R<String> {
+    let k = keys()?.into_iter().find(|k| k.path == pub_path).ok_or("That isn't one of your Pico SSH keys.")?;
+    if k.signing {
+        return Err("Git signs your commits with this key. Pick another signing key under Git signing first.".into());
+    }
+    let private = pub_path.strip_suffix(".pub").ok_or("Expected the .pub file of the key.")?;
+    crate::migrate::archive(private)
+}
+
 /// Pulls the resident SSH keys stored on the Pico into ~/.ssh (`ssh-keygen -K`).
 /// Existing files are never overwritten. Returns the newly added keys.
 pub fn recover(pin: Option<&str>) -> R<Vec<SshKey>> {

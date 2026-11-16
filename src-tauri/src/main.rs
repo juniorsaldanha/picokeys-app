@@ -610,6 +610,16 @@ async fn ssh_switch_config(old: String, key: String) -> Result<Vec<String>, Stri
 }
 
 #[tauri::command]
+async fn ssh_remove(path: String) -> Result<String, String> {
+    let detail = path.clone();
+    audit::log("ssh_remove", &detail, async move {
+        admin::require()?;
+        blocking(move || ssh::remove(&path)).await
+    }
+    .await)
+}
+
+#[tauri::command]
 async fn ssh_archive(old: String) -> Result<String, String> {
     let detail = old.clone();
     audit::log("ssh_archive", &detail, async move {
@@ -655,7 +665,7 @@ fn main() {
             large_blob_delete, oath_list, oath_calculate, oath_add, oath_delete,
             oath_unlock, oath_lock, oath_protected, oath_set_password, oath_rename,
             otp_status, otp_configure, otp_delete, otp_swap, random_hex, fw_releases, fw_flash, fw_pick_file, fw_flash_file, fw_boot_log,
-            ssh_env, ssh_install_openssh, ssh_keys, ssh_generate, ssh_recover, ssh_git_setup, ssh_add_host, ssh_test,
+            ssh_env, ssh_install_openssh, ssh_keys, ssh_remove, ssh_generate, ssh_recover, ssh_git_setup, ssh_add_host, ssh_test,
             ssh_inventory, ssh_authorize, ssh_check, ssh_switch_config, ssh_archive
         ])
         .run(tauri::generate_context!())

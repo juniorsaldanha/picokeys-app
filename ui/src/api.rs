@@ -235,6 +235,13 @@ pub async fn ssh_keys() -> Result<Vec<types::SshKey>, String> {
     call("ssh_keys", NONE).await
 }
 #[derive(Serialize)]
+struct PathArgs<'a> {
+    path: &'a str,
+}
+pub async fn ssh_remove(path: &str) -> Result<String, String> {
+    guarded("ssh_remove", PathArgs { path }).await
+}
+#[derive(Serialize)]
 struct KeyArgs<'a> {
     key: &'a types::NewSshKey,
 }

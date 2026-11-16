@@ -3,7 +3,7 @@ use crate::api;
 use crate::pages::{ErrorBox, PageHeader, humanize};
 use crate::AppState;
 use dioxus::prelude::*;
-use icons::{Check, Copy, Download, ExternalLink, Fingerprint, GitCommitHorizontal, KeyRound, Plug, Plus, RefreshCw, Server, TriangleAlert};
+use icons::{Check, Copy, Download, ExternalLink, Fingerprint, GitCommitHorizontal, KeyRound, Plug, Plus, RefreshCw, Server, Trash2, TriangleAlert};
 use types::{GitSetup, GitSigning, NewSshKey, SshEnv, SshKey};
 
 use crate::ui::alert::{Alert, AlertDescription, AlertTitle, AlertVariant};
@@ -131,7 +131,17 @@ fn Tooling(env: SshEnv, on_change: EventHandler<()>) -> Element {
 fn Keys(env: SshEnv, keys: Vec<SshKey>, on_change: EventHandler<()>) -> Element {
     let mut creating = use_signal(|| false);
     let mut importing = use_signal(|| false);
+    let mut removing = use_signal(|| None::<String>);
+    let mut removed = use_signal(|| None::<Result<String, String>>);
     let can_create = env.keygen.is_some();
+    let remove = move |path: String| async move {
+        let r = api::ssh_remove(&path).await;
+        removing.set(None);
+        if r.is_ok() {
+            on_change.call(());
+        }
+        removed.set(Some(r));
+    };
     rsx! {
         Card {
             CardHeader {
@@ -167,6 +177,16 @@ fn Keys(env: SshEnv, keys: Vec<SshKey>, on_change: EventHandler<()>) -> Element 
                         },
                     }
                 }
+                match removed() {
+                    Some(Ok(m)) => rsx! {
+                        p { class: "text-sm text-success", "{m}. " }
+                        p { class: "text-xs text-muted-foreground",
+                            "Also remove its public key from GitHub, GitLab and your servers' authorized_keys. If it was stored on the key (resident), delete its ssh: entry on the Passkeys page too."
+                        }
+                    },
+                    Some(Err(e)) => rsx! { p { class: "text-sm text-destructive", "{e}" } },
+                    None => rsx! {},
+                }
                 if keys.is_empty() && !creating() {
                     p { class: "text-sm text-muted-foreground",
                         if can_create { "No security-key SSH keys yet. Create one to get started." } else { "No security-key SSH keys yet." }
@@ -190,6 +210,20 @@ fn Keys(env: SshEnv, keys: Vec<SshKey>, on_change: EventHandler<()>) -> Element 
                             }
                             a { href: "https://gitlab.com/-/user_settings/ssh_keys", target: "_blank",
                                 Button { variant: ButtonVariant::Ghost, size: ButtonSize::Sm, ExternalLink {} "Add to GitLab" }
+                            }
+                            if removing() == Some(k.path.clone()) {
+                                span { class: "ml-auto self-center text-xs text-muted-foreground", "Move to ~/.ssh/retired? Logins using it stop working." }
+                                Button { variant: ButtonVariant::Ghost, size: ButtonSize::Sm, onclick: move |_| removing.set(None), "Cancel" }
+                                Button { variant: ButtonVariant::Destructive, size: ButtonSize::Sm,
+                                    onclick: { let p = k.path.clone(); move |_| remove(p.clone()) },
+                                    Trash2 {} "Remove"
+                                }
+                            } else {
+                                Button { class: "ml-auto", variant: ButtonVariant::Ghost, size: ButtonSize::Sm, disabled: k.signing,
+                                    title: if k.signing { "Git signs commits with this key; pick another signing key first" } else { "Remove this key" },
+                                    onclick: { let p = k.path.clone(); move |_| { removed.set(None); removing.set(Some(p.clone())) } },
+                                    Trash2 {} "Remove"
+                                }
                             }
                         }
                     }
