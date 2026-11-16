@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "io.github.picokeymanager",
   "build": {
-    "beforeDevCommand": "dx serve --package ui --platform web --port 1420 --open false --interactive false",
+    "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "dx bundle --package ui --platform web --release --out-dir dist",
+    "beforeBuildCommand": "npm run css && dx bundle --package ui --platform web --release --out-dir dist",
     "frontendDist": "../dist/public"
   },
   "app": {
