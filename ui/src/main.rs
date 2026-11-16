@@ -4,10 +4,11 @@ mod firmware;
 mod oath;
 mod otp;
 mod pages;
+mod ssh;
 mod ui;
 
 use dioxus::prelude::*;
-use icons::{Cpu, HardDriveDownload, Hand, KeyRound, LayoutDashboard, RectangleEllipsis, ShieldCheck, Usb};
+use icons::{Cpu, Terminal, HardDriveDownload, Hand, KeyRound, LayoutDashboard, RectangleEllipsis, ShieldCheck, Usb};
 use types::{Device, FidoInfo};
 use ui::spinner::Spinner;
 use ui::theme_toggle::ThemeToggle;
@@ -27,6 +28,7 @@ pub enum Page {
     Oath,
     Otp,
     Firmware,
+    Ssh,
 }
 
 /// App-wide state. Signals are `Copy`, so pages grab this via `use_context`.
@@ -87,6 +89,7 @@ fn App() -> Element {
                             Page::Oath => rsx! { oath::OathPage {} },
                             Page::Otp => rsx! { otp::OtpPage {} },
                             Page::Firmware => rsx! { firmware::FirmwarePage {} },
+                            Page::Ssh => rsx! { ssh::SshPage {} },
                         }
                     }
                 }
@@ -162,6 +165,7 @@ fn Sidebar(devices: Signal<Vec<Device>>, page: Signal<Page>) -> Element {
             div { class: "px-2 pb-1.5 pt-4 text-[11px] font-medium uppercase tracking-wider text-muted-foreground", "Pico" }
             nav { class: "flex flex-col gap-0.5",
                 NavItem { page, target: Page::Oath, label: "Authenticator", icon: rsx! { ShieldCheck {} } }
+                NavItem { page, target: Page::Ssh, label: "SSH & Git", icon: rsx! { Terminal {} } }
                 NavItem { page, target: Page::Otp, label: "OTP slots", icon: rsx! { Hand {} } }
                 NavItem { page, target: Page::Device, label: "Device", icon: rsx! { Cpu {} } }
                 NavItem { page, target: Page::Firmware, label: "Firmware", icon: rsx! { HardDriveDownload {} } }

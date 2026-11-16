@@ -354,3 +354,75 @@ pub struct FlashProgress {
     pub done: u64,
     pub total: u64,
 }
+
+/// Local OpenSSH / git tooling as seen by the app.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct SshEnv {
+    /// `macos`, `linux`, `windows`
+    pub os: String,
+    /// ssh-keygen that can talk to security keys (absent if none found).
+    pub keygen: Option<String>,
+    pub ssh: Option<String>,
+    pub version: String,
+    /// Why security keys won't work, if they won't.
+    pub problem: Option<String>,
+    /// Homebrew is installed (macOS fix: `brew install openssh`).
+    pub brew: bool,
+    pub git: Option<String>,
+    pub signing: GitSigning,
+}
+
+/// Current global git commit-signing settings.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct GitSigning {
+    pub format: Option<String>,
+    pub signing_key: Option<String>,
+    pub commit_sign: bool,
+    pub tag_sign: bool,
+    pub allowed_signers: Option<String>,
+    pub ssh_program: Option<String>,
+    pub ssh_command: Option<String>,
+    pub email: Option<String>,
+}
+
+/// A security-key SSH key file in ~/.ssh.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SshKey {
+    /// Path of the `.pub` file.
+    pub path: String,
+    /// `ecdsa-sk` or `ed25519-sk`
+    pub kind: String,
+    /// FIDO application, e.g. `ssh:` or `ssh:work`
+    pub application: String,
+    pub comment: String,
+    /// The whole public key line.
+    pub public: String,
+    /// Configured as git's signing key.
+    pub signing: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct NewSshKey {
+    /// File name under ~/.ssh, e.g. `id_ecdsa_sk_work`
+    pub file: String,
+    pub ed25519: bool,
+    /// Stored on the key (discoverable); recoverable with `ssh-keygen -K`.
+    pub resident: bool,
+    /// Require PIN on every use, not just touch.
+    pub verify_required: bool,
+    /// `ssh:<label>`; empty means plain `ssh:`
+    pub label: String,
+    pub comment: String,
+    pub pin: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct GitSetup {
+    /// `.pub` path of the key to sign with.
+    pub key: String,
+    pub email: String,
+    pub sign_commits: bool,
+    pub sign_tags: bool,
+    /// Also make git's SSH transport use this OpenSSH (macOS + Homebrew).
+    pub use_for_transport: bool,
+}

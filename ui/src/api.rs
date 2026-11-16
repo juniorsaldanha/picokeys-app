@@ -195,3 +195,37 @@ pub fn on_flash_progress(mut f: impl FnMut(types::FlashProgress) + 'static) -> L
     let p = tauri_listen("flash-progress", &cb);
     Listener(cb, p)
 }
+
+pub async fn ssh_env() -> Result<types::SshEnv, String> {
+    call("ssh_env", NONE).await
+}
+pub async fn ssh_keys() -> Result<Vec<types::SshKey>, String> {
+    call("ssh_keys", NONE).await
+}
+#[derive(Serialize)]
+struct KeyArgs<'a> {
+    key: &'a types::NewSshKey,
+}
+pub async fn ssh_generate(key: &types::NewSshKey) -> Result<types::SshKey, String> {
+    call("ssh_generate", KeyArgs { key }).await
+}
+#[derive(Serialize)]
+struct SetupArgs<'a> {
+    setup: &'a types::GitSetup,
+}
+pub async fn ssh_git_setup(setup: &types::GitSetup) -> Result<types::GitSigning, String> {
+    call("ssh_git_setup", SetupArgs { setup }).await
+}
+#[derive(Serialize)]
+struct HostArgs<'a> {
+    host: &'a str,
+    key: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pin: Option<&'a str>,
+}
+pub async fn ssh_add_host(host: &str, key: &str) -> Result<String, String> {
+    call("ssh_add_host", HostArgs { host, key, pin: None }).await
+}
+pub async fn ssh_test(host: &str, key: &str, pin: Option<&str>) -> Result<String, String> {
+    call("ssh_test", HostArgs { host, key, pin }).await
+}

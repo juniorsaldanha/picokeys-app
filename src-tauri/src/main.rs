@@ -6,9 +6,10 @@ mod firmware;
 mod oath;
 mod otp;
 mod pico;
+mod ssh;
 
 use std::sync::Mutex;
-use types::{Board, Device, FlashProgress, FwRelease, FidoInfo, NewOath, NewOtp, OathAccount, OtpSlot, Passkey, Phy, PicoInfo};
+use types::{Board, GitSetup, GitSigning, NewSshKey, SshEnv, SshKey, Device, FlashProgress, FwRelease, FidoInfo, NewOath, NewOtp, OathAccount, OtpSlot, Passkey, Phy, PicoInfo};
 
 /// One device conversation at a time: Pico firmware wedges if HID (CTAP) and
 /// CCID (rescue) requests overlap.
@@ -135,12 +136,43 @@ async fn fw_flash(app: tauri::AppHandle, url: String, board: Board) -> Result<()
     .await
 }
 
+#[tauri::command]
+async fn ssh_env() -> Result<SshEnv, String> {
+    tauri::async_runtime::spawn_blocking(ssh::env).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn ssh_keys() -> Result<Vec<SshKey>, String> {
+    tauri::async_runtime::spawn_blocking(ssh::keys).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn ssh_generate(key: NewSshKey) -> Result<SshKey, String> {
+    blocking(move || ssh::generate(&key)).await
+}
+
+#[tauri::command]
+async fn ssh_git_setup(setup: GitSetup) -> Result<GitSigning, String> {
+    tauri::async_runtime::spawn_blocking(move || ssh::setup_git(&setup)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn ssh_add_host(host: String, key: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || ssh::add_host(&host, &key)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn ssh_test(host: String, key: String, pin: Option<String>) -> Result<String, String> {
+    blocking(move || ssh::test(&host, &key, pin.as_deref())).await
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             list_devices, fido_info, set_pin, change_pin, list_passkeys, delete_passkey, wink,
             pico_info, write_phy, fido_reset, oath_list, oath_calculate, oath_add, oath_delete,
-            otp_status, otp_configure, otp_delete, otp_swap, random_hex, fw_releases, fw_flash
+            otp_status, otp_configure, otp_delete, otp_swap, random_hex, fw_releases, fw_flash,
+            ssh_env, ssh_keys, ssh_generate, ssh_git_setup, ssh_add_host, ssh_test
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
