@@ -278,3 +278,79 @@ pub enum NewOtp {
     Static { password: String, enter: bool },
     ChallengeResponse { key: String, touch: bool },
 }
+
+/// Boards the official release assets are built for.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Board {
+    Esp32S3,
+    Esp32S2,
+    Rp2040,
+    Rp2350,
+}
+
+impl Board {
+    /// From a release asset name like `pico_fido_esp32-s3_8.0.bin` or `pico_fido_pico2-8.0.uf2`.
+    pub fn from_asset(name: &str) -> Option<Self> {
+        let n = name.to_ascii_lowercase();
+        if n.ends_with(".bin") && (n.contains("_esp32-s3") || n.contains("_esp32s3")) {
+            Some(Self::Esp32S3)
+        } else if n.ends_with(".bin") && (n.contains("_esp32-s2") || n.contains("_esp32s2")) {
+            Some(Self::Esp32S2)
+        } else if n.ends_with(".uf2") && (n.contains("_pico2-") || n.contains("_pico2_") || n.ends_with("_pico2.uf2")) {
+            Some(Self::Rp2350)
+        } else if n.ends_with(".uf2") && (n.contains("_pico-") || n.contains("_pico_") || n.ends_with("_pico.uf2")) {
+            Some(Self::Rp2040)
+        } else {
+            None
+        }
+    }
+
+    /// Board for a rescue-applet MCU code (see `PicoInfo::mcu`).
+    pub fn from_mcu(mcu: &str) -> Option<Self> {
+        Some(match mcu {
+            "RP2040" => Self::Rp2040,
+            "RP2350" => Self::Rp2350,
+            "ESP32-S3" => Self::Esp32S3,
+            "ESP32-S2" => Self::Esp32S2,
+            _ => return None,
+        })
+    }
+
+    pub fn is_esp(self) -> bool {
+        matches!(self, Self::Esp32S3 | Self::Esp32S2)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Esp32S3 => "ESP32-S3",
+            Self::Esp32S2 => "ESP32-S2",
+            Self::Rp2040 => "RP2040",
+            Self::Rp2350 => "RP2350",
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct FwAsset {
+    pub name: String,
+    pub url: String,
+    pub size: u64,
+    pub board: Board,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct FwRelease {
+    /// `fido`, `hsm` or `openpgp`
+    pub product: String,
+    pub tag: String,
+    pub date: String,
+    pub assets: Vec<FwAsset>,
+}
+
+/// Progress event emitted while flashing (`flash-progress`).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct FlashProgress {
+    pub stage: String,
+    pub done: u64,
+    pub total: u64,
+}

@@ -25,17 +25,18 @@ const TAG_LED_DRIVER: u8 = 0xC;
 pub(crate) struct Card(pcsc::Card);
 
 impl Card {
-    /// ponytail: picks the first reader named like a Pico Key; map HID path ↔ reader when multi-key matters.
+    /// First reader whose card answers the pico-keys rescue applet. Reader names follow the
+    /// (user-changeable) USB product name, so they can't be matched by name.
+    // ponytail: first pico-keys reader wins; map HID path <-> reader when multi-key matters.
     pub(crate) fn open() -> R<Self> {
         let ctx = Context::establish(Scope::User).map_err(|e| format!("PC/SC unavailable: {e}"))?;
         let mut buf = vec![0u8; ctx.list_readers_len().map_err(|e| e.to_string())?];
         let readers: Vec<CString> = ctx.list_readers(&mut buf).map_err(|e| e.to_string())?.map(|r| r.to_owned()).collect();
-        let reader = readers
+        readers
             .iter()
-            .find(|r| r.to_string_lossy().to_lowercase().contains("pico"))
-            .ok_or("No Pico Key smart-card interface found (is CCID enabled?)")?;
-        let card = ctx.connect(reader, ShareMode::Shared, Protocols::ANY).map_err(|e| e.to_string())?;
-        Ok(Card(card))
+            .filter_map(|r| ctx.connect(r, ShareMode::Shared, Protocols::ANY).ok().map(Card))
+            .find(|c| c.select().is_ok())
+            .ok_or_else(|| "No Pico Key smart-card interface found (is CCID enabled?)".into())
     }
 
     fn transmit(&self, cmd: &[u8]) -> R<(Vec<u8>, [u8; 2])> {
@@ -303,6 +304,13 @@ pub fn fido_reset(path: &str) -> R<()> {
         (CTAPHID_ERROR, e) => Err(format!("CTAPHID error {e:?}")),
         _ => Err("Unexpected reply to reset".into()),
     }
+}
+
+/// Restart an RP2040/RP2350 key into its BOOTSEL (UF2 drive) mode. Needs a touch.
+pub fn reboot_bootsel() -> R<()> {
+    let card = Card::open()?;
+    card.select()?;
+    card.apdu(&[0x80, 0x1F, 0x01, 0x00]).map(|_| ())
 }
 
 #[cfg(test)]

@@ -7,6 +7,9 @@ pub enum AlertVariant {
     #[default]
     Default,
     Destructive,
+    Success,
+    Warning,
+    Info,
 }
 
 impl AlertVariant {
@@ -16,6 +19,9 @@ impl AlertVariant {
             Self::Destructive => {
                 "border-destructive/50 text-destructive dark:border-destructive [&>svg]:text-destructive"
             }
+            Self::Success => "border-success/40 bg-success/5 [&>svg]:text-success",
+            Self::Warning => "border-warning/50 bg-warning/10 [&>svg]:text-warning",
+            Self::Info => "border-info/40 bg-info/5 [&>svg]:text-info",
         }
     }
 }

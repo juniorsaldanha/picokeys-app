@@ -148,3 +148,50 @@ struct BytesArgs {
 pub async fn random_hex(bytes: usize) -> String {
     call("random_hex", BytesArgs { bytes }).await.unwrap_or_default()
 }
+
+#[derive(Serialize)]
+struct ProductArgs<'a> {
+    product: &'a str,
+}
+pub async fn fw_releases(product: &str) -> Result<Vec<types::FwRelease>, String> {
+    call("fw_releases", ProductArgs { product }).await
+}
+#[derive(Serialize)]
+struct FlashArgs<'a> {
+    url: &'a str,
+    board: types::Board,
+}
+pub async fn fw_flash(url: &str, board: types::Board) -> Result<(), String> {
+    call("fw_flash", FlashArgs { url, board }).await
+}
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"], js_name = listen)]
+    fn tauri_listen(event: &str, handler: &Closure<dyn FnMut(JsValue)>) -> js_sys::Promise;
+}
+
+/// Calls `f` with each `flash-progress` event payload until the returned guard is dropped.
+pub struct Listener(#[allow(dead_code)] Closure<dyn FnMut(JsValue)>, js_sys::Promise);
+impl Drop for Listener {
+    fn drop(&mut self) {
+        // listen() resolves to an unlisten function
+        let unlisten = Closure::<dyn FnMut(JsValue)>::new(|f: JsValue| {
+            if let Some(f) = f.dyn_ref::<js_sys::Function>() {
+                let _ = f.call0(&JsValue::NULL);
+            }
+        });
+        let _ = self.1.then(&unlisten);
+        unlisten.forget();
+    }
+}
+pub fn on_flash_progress(mut f: impl FnMut(types::FlashProgress) + 'static) -> Listener {
+    let cb = Closure::<dyn FnMut(JsValue)>::new(move |e: JsValue| {
+        let payload = js_sys::Reflect::get(&e, &"payload".into()).unwrap_or(JsValue::NULL);
+        if let Ok(p) = serde_wasm_bindgen::from_value(payload) {
+            f(p)
+        }
+    });
+    let p = tauri_listen("flash-progress", &cb);
+    Listener(cb, p)
+}

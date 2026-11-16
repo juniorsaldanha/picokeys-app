@@ -2,12 +2,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod fido;
+mod firmware;
 mod oath;
 mod otp;
 mod pico;
 
 use std::sync::Mutex;
-use types::{Device, FidoInfo, NewOath, NewOtp, OathAccount, OtpSlot, Passkey, Phy, PicoInfo};
+use types::{Board, Device, FlashProgress, FwRelease, FidoInfo, NewOath, NewOtp, OathAccount, OtpSlot, Passkey, Phy, PicoInfo};
 
 /// One device conversation at a time: Pico firmware wedges if HID (CTAP) and
 /// CCID (rescue) requests overlap.
@@ -120,12 +121,26 @@ fn random_hex(bytes: usize) -> Result<String, String> {
     otp::random_hex(bytes)
 }
 
+#[tauri::command]
+async fn fw_releases(product: String) -> Result<Vec<FwRelease>, String> {
+    tauri::async_runtime::spawn_blocking(move || firmware::releases(&product)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn fw_flash(app: tauri::AppHandle, url: String, board: Board) -> Result<(), String> {
+    use tauri::Emitter;
+    blocking(move || firmware::flash(&url, board, &mut |p: FlashProgress| {
+        let _ = app.emit("flash-progress", p);
+    }))
+    .await
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             list_devices, fido_info, set_pin, change_pin, list_passkeys, delete_passkey, wink,
             pico_info, write_phy, fido_reset, oath_list, oath_calculate, oath_add, oath_delete,
-            otp_status, otp_configure, otp_delete, otp_swap, random_hex
+            otp_status, otp_configure, otp_delete, otp_swap, random_hex, fw_releases, fw_flash
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

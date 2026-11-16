@@ -21,6 +21,7 @@ Stack: **Tauri 2** (native shell, Rust backend) + **Dioxus 0.7** (Rust → WASM 
 - FIDO factory reset
 - Authenticator (OATH): TOTP/HOTP codes, add via otpauth:// link or setup key, touch-required accounts
 - OTP slots (short/long touch): HMAC-SHA1 challenge-response, Yubico OTP, static password; erase, swap
+- Firmware: install official Pico FIDO / HSM / OpenPGP releases from GitHub; ESP32-S2/S3 via the ROM bootloader (espflash), RP2040/RP2350 via the UF2 drive
 
 ## Layout
 
