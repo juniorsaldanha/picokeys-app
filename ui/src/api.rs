@@ -178,6 +178,24 @@ struct FlashArgs<'a> {
 pub async fn fw_flash(url: &str, board: types::Board) -> Result<(), String> {
     guarded("fw_flash", FlashArgs { url, board }).await
 }
+pub async fn fw_pick_file() -> Result<Option<String>, String> {
+    call("fw_pick_file", NONE).await
+}
+#[derive(Serialize)]
+struct FlashFileArgs<'a> {
+    path: &'a str,
+    board: types::Board,
+}
+pub async fn fw_flash_file(path: &str, board: types::Board) -> Result<(), String> {
+    guarded("fw_flash_file", FlashFileArgs { path, board }).await
+}
+#[derive(Serialize)]
+struct BootLogArgs {
+    seconds: u64,
+}
+pub async fn fw_boot_log(seconds: u64) -> Result<String, String> {
+    call("fw_boot_log", BootLogArgs { seconds }).await
+}
 
 #[wasm_bindgen]
 extern "C" {

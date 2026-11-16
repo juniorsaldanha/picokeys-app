@@ -99,7 +99,7 @@ fn download(url: &str, progress: &mut dyn FnMut(FlashProgress)) -> R<Vec<u8>> {
 
 pub fn flash(url: &str, board: Board, progress: &mut dyn FnMut(FlashProgress)) -> R<()> {
     let data = download(url, progress)?;
-    if board.is_esp() { flash_esp(&data, board, progress) } else { flash_uf2(&data, board, progress) }
+    if board.is_esp() { flash_esp(&data, board, false, progress) } else { flash_uf2(&data, board, progress) }
 }
 
 // ---------- ESP32 ----------
@@ -143,17 +143,29 @@ impl ProgressCallbacks for Progress<'_> {
     fn finish(&mut self, _skipped: bool) {}
 }
 
-fn flash_esp(data: &[u8], board: Board, progress: &mut dyn FnMut(FlashProgress)) -> R<()> {
-    check_esp_image(data, board)?;
-    // ponytail: first Espressif USB port wins; add a port picker if people flash several boards at once.
-    let (name, info) = serialport::available_ports()
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .find_map(|p| match p.port_type {
-            serialport::SerialPortType::UsbPort(u) if u.vid == ESPRESSIF_VID => Some((p.port_name, u)),
-            _ => None,
-        })
-        .ok_or("No ESP32 in download mode found. Unplug the key, hold its BOOT button while plugging it back in, then try again.")?;
+fn flash_esp(data: &[u8], board: Board, app_only: bool, progress: &mut dyn FnMut(FlashProgress)) -> R<()> {
+    if !app_only {
+        check_esp_image(data, board)?;
+    }
+    let (name, info) = match espressif_port() {
+        Some(p) => p,
+        None => {
+            // A board with a USB-UART "COM" port can be put into download mode for us.
+            let com = uart_port().ok_or("No ESP32 in download mode found. Unplug the key, hold its BOOT button while plugging it back in, then try again.")?;
+            progress(FlashProgress { stage: "Restarting the key into download mode (COM port)".into(), done: 0, total: 0 });
+            uart_reset(&com, true)?;
+            let start = Instant::now();
+            loop {
+                if let Some(p) = espressif_port() {
+                    break p;
+                }
+                if start.elapsed() > Duration::from_secs(8) {
+                    return Err("The key didn't enter download mode through its COM port. Hold BOOT while plugging it in, then try again.".into());
+                }
+                std::thread::sleep(Duration::from_millis(300));
+            }
+        }
+    };
     progress(FlashProgress { stage: "Connecting".into(), done: 0, total: 0 });
     let serial = serialport::new(&name, 115_200)
         .flow_control(serialport::FlowControl::None)
@@ -169,16 +181,140 @@ fn flash_esp(data: &[u8], board: Board, progress: &mut dyn FnMut(FlashProgress))
     // images are unsigned: writing ours over it bricks the key. Keep the (signed) bootloader that's
     // there and write from the partition table up; the bootloader doesn't verify the app.
     let secure = flasher.security_info().map_err(|e| format!("Couldn't read the chip's security fuses: {e}"))?.flags & 1 != 0;
-    let (addr, image) = if secure { (BOOTLOADER_END, keep_bootloader(data)?) } else { (0, data) };
-    if secure {
+    let (addr, image) = if app_only {
+        (APP_OFFSET, data)
+    } else if secure {
+        (BOOTLOADER_END, keep_bootloader(data)?)
+    } else {
+        (0, data)
+    };
+    if secure && !app_only {
         progress(FlashProgress { stage: "Secure boot is on: keeping your signed bootloader".into(), done: 0, total: 0 });
     }
     // The merged image covers bootloader + partition table + app (0x0..~0xB8000); the key's data
     // partition (part0 at 0x200000) is not touched, so passkeys and settings survive.
     flasher.write_bin_to_flash(addr, image, &mut Progress(progress, 0)).map_err(|e| format!("Writing failed: {e}"))?;
     progress(FlashProgress { stage: "Restarting".into(), done: 1, total: 1 });
-    let _ = flasher.connection().reset_after(true, chip);
+    // A reset over the native USB port can land back in download mode; the COM port boots it normally.
+    match uart_port() {
+        Some(com) => {
+            drop(flasher);
+            uart_reset(&com, false)
+        }
+        None => {
+            let _ = flasher.connection().reset_after(true, chip);
+            Ok(())
+        }
+    }
+}
+
+/// pico-keys partitions.csv (S2 and S3): `factory` app at 0x20000, 1 MB.
+const APP_OFFSET: u32 = 0x20000;
+const APP_MAX: usize = 0x10_0000;
+
+/// Merged image (bootloader + partition table + app) or a bare app image for the app slot?
+fn esp_app_only(d: &[u8], board: Board) -> R<bool> {
+    let merged = check_esp_image(d, board).is_ok() && (board == Board::Esp32S2 || d.get(0x8000..0x8002) == Some(&[0xAA, 0x50]));
+    if merged {
+        return Ok(false);
+    }
+    let want: u16 = if board == Board::Esp32S2 { 2 } else { 9 };
+    match (d.first(), d.get(12..14)) {
+        (Some(0xE9), Some(id)) if u16::from_le_bytes([id[0], id[1]]) == want => {
+            if d.len() > APP_MAX {
+                Err(format!("This app image is {} KB; the key's app slot holds 1024 KB.", d.len() / 1024))
+            } else {
+                Ok(true)
+            }
+        }
+        _ => Err(format!("This file isn't an {} firmware or app image.", board.label())),
+    }
+}
+
+/// Flashes a local file: an ESP32 merged image or app image (`build/pico_fido.bin`), or a UF2.
+pub fn flash_file(path: &str, board: Board, progress: &mut dyn FnMut(FlashProgress)) -> R<()> {
+    let data = std::fs::read(path).map_err(|e| format!("Couldn't read {path}: {e}"))?;
+    if data.len() > MAX_IMAGE {
+        return Err("Firmware file is unexpectedly large.".into());
+    }
+    if board.is_esp() {
+        let app_only = esp_app_only(&data, board)?;
+        if app_only {
+            progress(FlashProgress { stage: "App image: writing only the app slot at 0x20000".into(), done: 0, total: 0 });
+        }
+        flash_esp(&data, board, app_only, progress)
+    } else {
+        flash_uf2(&data, board, progress)
+    }
+}
+
+fn espressif_port() -> Option<(String, serialport::UsbPortInfo)> {
+    // ponytail: first Espressif USB port wins; add a port picker if people flash several boards at once.
+    serialport::available_ports().ok()?.into_iter().find_map(|p| match p.port_type {
+        serialport::SerialPortType::UsbPort(u) if u.vid == ESPRESSIF_VID => Some((p.port_name, u)),
+        _ => None,
+    })
+}
+
+/// USB-UART bridges used for dev boards' "COM"/"UART" port: WCH CH34x, Silicon Labs CP210x, FTDI.
+fn uart_port() -> Option<String> {
+    serialport::available_ports().ok()?.into_iter().find_map(|p| match p.port_type {
+        serialport::SerialPortType::UsbPort(u) if [0x1A86, 0x10C4, 0x0403].contains(&u.vid) => Some(p.port_name),
+        _ => None,
+    })
+}
+
+/// Pulses EN through the bridge's RTS line; DTR drives GPIO0, low = download mode.
+fn uart_reset(port: &str, download: bool) -> R<()> {
+    let mut s = serialport::new(port, 115_200).open().map_err(|e| format!("Couldn't open {port}: {e}"))?;
+    let set = |s: &mut Box<dyn serialport::SerialPort>, dtr: bool, rts: bool| {
+        let _ = s.write_data_terminal_ready(dtr);
+        let _ = s.write_request_to_send(rts);
+    };
+    set(&mut s, false, true);
+    std::thread::sleep(Duration::from_millis(100));
+    set(&mut s, download, false);
+    std::thread::sleep(Duration::from_millis(400));
+    set(&mut s, false, false);
     Ok(())
+}
+
+/// Restarts the key through its COM port and returns what the firmware prints while booting.
+pub fn boot_log(seconds: u64) -> R<String> {
+    let port = uart_port().ok_or("No COM port found. Connect the board's second USB port (often labelled COM or UART) too.")?;
+    let mut s = serialport::new(&port, 115_200).timeout(Duration::from_millis(200)).open().map_err(|e| format!("Couldn't open {port}: {e}"))?;
+    let _ = s.write_data_terminal_ready(false);
+    let _ = s.write_request_to_send(true);
+    std::thread::sleep(Duration::from_millis(100));
+    let _ = s.write_request_to_send(false);
+    let (mut out, mut buf, end) = (Vec::new(), [0u8; 4096], Instant::now() + Duration::from_secs(seconds.clamp(2, 30)));
+    while Instant::now() < end && out.len() < 512 * 1024 {
+        match s.read(&mut buf) {
+            Ok(n) => out.extend_from_slice(&buf[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(e) => return Err(format!("Reading {port} failed: {e}")),
+        }
+    }
+    Ok(clean_log(&out))
+}
+
+/// Drops carriage returns and ANSI colour codes.
+fn clean_log(raw: &[u8]) -> String {
+    let t = String::from_utf8_lossy(raw).replace('\r', "");
+    let mut out = String::with_capacity(t.len());
+    let mut it = t.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '\x1b' && it.peek() == Some(&'[') {
+            for d in it.by_ref() {
+                if d.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 // ---------- RP2040 / RP2350 ----------
@@ -316,6 +452,19 @@ mod tests {
         assert_eq!(Board::from_asset("pico_fido_pico-8.0.uf2"), Some(Board::Rp2040));
         assert_eq!(Board::from_asset("pico_fido_waveshare_rp2040_zero.uf2"), None);
         assert!(download("https://evil.example/x.bin", &mut |_| {}).is_err());
+
+        // merged S3 image (partition table at 0x8000) vs bare app image vs junk
+        let mut merged_s3 = vec![0xFFu8; 0x9000];
+        merged_s3[0] = 0xE9;
+        merged_s3[12..14].copy_from_slice(&[9, 0]);
+        merged_s3[0x8000..0x8002].copy_from_slice(&[0xAA, 0x50]);
+        assert_eq!(esp_app_only(&merged_s3, Board::Esp32S3), Ok(false));
+        assert_eq!(esp_app_only(&esp, Board::Esp32S3), Ok(true));
+        assert!(esp_app_only(&esp, Board::Esp32S2).is_err());
+        let mut big = esp.clone();
+        big.resize(APP_MAX + 1, 0);
+        assert!(esp_app_only(&big, Board::Esp32S3).is_err());
+        assert_eq!(clean_log(b"\x1b[0;32mI (55) boot: ok\x1b[0m\r\n"), "I (55) boot: ok\n");
     }
 
     /// Lists releases and validates the real v8.0 images (network, no device).

@@ -490,6 +490,36 @@ async fn fw_flash(app: tauri::AppHandle, url: String, board: Board) -> Result<()
     .await)
 }
 
+/// File picker for a local firmware image. Ok(None) = cancelled.
+#[tauri::command]
+async fn fw_pick_file(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let f = tauri::async_runtime::spawn_blocking(move || app.dialog().file().add_filter("Firmware", &["bin", "uf2"]).blocking_pick_file())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(f.and_then(|f| f.into_path().ok()).map(|p| p.display().to_string()))
+}
+
+#[tauri::command]
+async fn fw_flash_file(app: tauri::AppHandle, path: String, board: Board) -> Result<(), String> {
+    let sha = std::fs::read(&path).map(|d| ring::digest::digest(&ring::digest::SHA256, &d).as_ref().iter().map(|b| format!("{b:02x}")).collect::<String>()).unwrap_or_default();
+    let detail = format!("{path} sha256:{sha}");
+    audit::log("fw_flash_file", &detail, async move {
+        admin::require()?;
+        use tauri::Emitter;
+        blocking(move || firmware::flash_file(&path, board, &mut |p: FlashProgress| {
+            let _ = app.emit("flash-progress", p);
+        }))
+        .await
+    }
+    .await)
+}
+
+#[tauri::command]
+async fn fw_boot_log(seconds: u64) -> Result<String, String> {
+    blocking(move || firmware::boot_log(seconds)).await
+}
+
 #[tauri::command]
 async fn ssh_env() -> Result<SshEnv, String> {
     tauri::async_runtime::spawn_blocking(ssh::env).await.map_err(|e| e.to_string())?
@@ -624,7 +654,7 @@ fn main() {
             large_blobs,
             large_blob_delete, oath_list, oath_calculate, oath_add, oath_delete,
             oath_unlock, oath_lock, oath_protected, oath_set_password, oath_rename,
-            otp_status, otp_configure, otp_delete, otp_swap, random_hex, fw_releases, fw_flash,
+            otp_status, otp_configure, otp_delete, otp_swap, random_hex, fw_releases, fw_flash, fw_pick_file, fw_flash_file, fw_boot_log,
             ssh_env, ssh_install_openssh, ssh_keys, ssh_generate, ssh_recover, ssh_git_setup, ssh_add_host, ssh_test,
             ssh_inventory, ssh_authorize, ssh_check, ssh_switch_config, ssh_archive
         ])
