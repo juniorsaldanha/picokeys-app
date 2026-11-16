@@ -117,11 +117,10 @@ pub fn copy_text(text: &str) {
     use js_sys::{Function, Reflect};
     // navigator.clipboard.writeText(text), without string-building JS
     let clip = Reflect::get(&js_sys::global(), &"navigator".into()).and_then(|n| Reflect::get(&n, &"clipboard".into()));
-    if let Ok(clip) = clip {
-        if let Ok(f) = Reflect::get(&clip, &"writeText".into()) {
+    if let Ok(clip) = clip
+        && let Ok(f) = Reflect::get(&clip, &"writeText".into()) {
             let _ = f.unchecked_into::<Function>().call1(&clip, &text.into());
         }
-    }
 }
 
 #[derive(Serialize)]

@@ -18,7 +18,7 @@ use crate::ui::switch::Switch;
 
 #[component]
 pub fn DevicePage() -> Element {
-    let mut info = use_resource(|| api::pico_info());
+    let mut info = use_resource(api::pico_info);
     rsx! {
         PageHeader { title: "Device", subtitle: "Pico Keys hardware and configuration.",
             Button { variant: ButtonVariant::Outline, size: ButtonSize::Sm, onclick: move |_| info.restart(), RefreshCw {} "Refresh" }

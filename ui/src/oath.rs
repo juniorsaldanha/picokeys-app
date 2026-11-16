@@ -18,7 +18,7 @@ use crate::ui::switch::Switch;
 
 #[component]
 pub fn OathPage() -> Element {
-    let mut list = use_resource(|| api::oath_list());
+    let mut list = use_resource(api::oath_list);
     let mut now = use_signal(api::now_secs);
     let mut adding = use_signal(|| false);
     let mut query = use_signal(String::new);
@@ -28,7 +28,7 @@ pub fn OathPage() -> Element {
         loop {
             api::sleep_ms(1000).await;
             let t = api::now_secs();
-            let rolled = (t / 30.0).floor() != (now.peek().clone() / 30.0).floor();
+            let rolled = (t / 30.0).floor() != (*now.peek() / 30.0).floor();
             now.set(t);
             if rolled {
                 list.restart();

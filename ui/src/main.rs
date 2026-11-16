@@ -47,8 +47,8 @@ fn App() -> Element {
     // Hot-plug: poll HID enumeration (cheap) and only touch state when it changes.
     use_future(move || async move {
         loop {
-            if let Ok(list) = api::list_devices().await {
-                if *devices.peek() != list {
+            if let Ok(list) = api::list_devices().await
+                && *devices.peek() != list {
                     let keep = device.peek().clone().filter(|d| list.contains(d));
                     if keep.is_none() {
                         pin.set(None);
@@ -56,7 +56,6 @@ fn App() -> Element {
                     device.set(keep.or_else(|| list.first().cloned()));
                     devices.set(list);
                 }
-            }
             scanned.set(true);
             api::sleep_ms(1200).await;
         }

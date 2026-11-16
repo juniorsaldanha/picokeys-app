@@ -158,7 +158,7 @@ fn modhex(d: &[u8]) -> String {
 
 fn unmodhex(s: &str) -> Option<Vec<u8>> {
     let v: Vec<u8> = s.trim().bytes().map(|c| MODHEX.iter().position(|&m| m == c.to_ascii_lowercase()).map(|p| p as u8)).collect::<Option<_>>()?;
-    (v.len() % 2 == 0).then(|| v.chunks(2).map(|p| p[0] << 4 | p[1]).collect())
+    v.len().is_multiple_of(2).then(|| v.chunks(2).map(|p| p[0] << 4 | p[1]).collect())
 }
 
 fn unhex_n(s: &str, n: usize, what: &str) -> R<Vec<u8>> {
