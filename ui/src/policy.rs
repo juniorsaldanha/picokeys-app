@@ -247,3 +247,66 @@ pub fn PasskeyControls(cred_id: String, on_change: EventHandler<()>) -> Element 
         }
     }
 }
+
+/// Large blobs stored for passkeys (e.g. SSH certificates, site data). Loaded on demand.
+#[component]
+pub fn LargeBlobsCard() -> Element {
+    let st = use_context::<AppState>();
+    let mut show = use_signal(|| false);
+    let mut busy = use_signal(|| None::<u32>);
+    let mut err = use_signal(|| None::<String>);
+    let mut data = use_resource(move || async move {
+        if !show() {
+            return None;
+        }
+        let (d, p) = ((st.device)()?, (st.pin)()?);
+        Some(api::large_blobs(&d.path, &p).await)
+    });
+    let del = move |i: u32| async move {
+        let (Some(d), Some(p)) = (st.device.peek().clone(), st.pin.peek().clone()) else { return };
+        busy.set(Some(i));
+        err.set(api::large_blob_delete(&d.path, &p, i).await.err().map(|e| humanize(&e)));
+        busy.set(None);
+        data.restart();
+    };
+    rsx! {
+        Card { class: "mt-6",
+            CardHeader {
+                CardTitle { "Large blobs" }
+                CardDescription { "Extra encrypted data sites store next to a passkey (largeBlob extension)." }
+            }
+            CardContent { class: "flex flex-col gap-3",
+                if !show() {
+                    div { Button { variant: ButtonVariant::Outline, size: ButtonSize::Sm, onclick: move |_| show.set(true), "Load" } }
+                } else {
+                    match &*data.read() {
+                        Some(Some(Ok(b))) => rsx! {
+                            p { class: "text-sm text-muted-foreground", "{b.used} of {b.max} bytes used · {b.entries.len()} entries" }
+                            crate::ui::progress::Progress { value: b.used as f64, max: b.max.max(1) as f64 }
+                            for e in b.entries.clone() {
+                                div { key: "{e.index}", class: "flex items-start gap-3 rounded-md border p-3",
+                                    div { class: "min-w-0 flex-1 text-sm",
+                                        div { class: "font-medium",
+                                            match &e.owner { Some(o) => rsx! { "{o}" }, None => rsx! { span { class: "text-warning", "No matching passkey (orphaned)" } } }
+                                        }
+                                        div { class: "text-xs text-muted-foreground", "{e.size} bytes on key · {e.orig_size} bytes original" }
+                                        if let Some(t) = &e.text { pre { class: "selectable mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 text-xs", "{t}" } }
+                                        else if !e.hex.is_empty() { code { class: "selectable mt-1 block break-all text-xs", "{e.hex}…" } }
+                                    }
+                                    Button { variant: ButtonVariant::Ghost, size: ButtonSize::Sm, class: "text-destructive", disabled: busy().is_some(),
+                                        onclick: move |_| { spawn(del(e.index)); },
+                                        if busy() == Some(e.index) { Spinner {} }
+                                        "Delete"
+                                    }
+                                }
+                            }
+                        },
+                        Some(Some(Err(e))) => rsx! { p { class: "text-sm text-destructive", "{humanize(e)}" } },
+                        _ => rsx! { Spinner {} },
+                    }
+                    if let Some(e) = err() { p { class: "text-sm text-destructive", "{e}" } }
+                }
+            }
+        }
+    }
+}

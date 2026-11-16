@@ -23,6 +23,10 @@ pub struct FidoInfo {
     pub min_pin_length: u32,
     pub remaining_passkeys: u32,
     pub max_msg_size: i32,
+    #[serde(default)]
+    pub max_large_blob: u32,
+    #[serde(default)]
+    pub max_cred_blob: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -460,4 +464,25 @@ pub enum FidoPolicy {
     /// Unix seconds; 0 clears.
     Expire { cred_id: String, unix: u32 },
     Touch { cred_id: String, required: bool },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct LargeBlobs {
+    /// Bytes used by the serialized array, and the key's maximum.
+    pub used: u32,
+    pub max: u32,
+    pub entries: Vec<BlobEntry>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct BlobEntry {
+    pub index: u32,
+    /// Encrypted size on the key / original (uncompressed) size.
+    pub size: u32,
+    pub orig_size: u32,
+    /// Passkey whose largeBlobKey decrypts it; None = orphaned or unreadable.
+    pub owner: Option<String>,
+    pub text: Option<String>,
+    /// First 64 bytes of the plaintext, hex.
+    pub hex: String,
 }

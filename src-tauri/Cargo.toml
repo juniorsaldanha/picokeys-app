@@ -21,3 +21,4 @@ ureq = { version = "3", features = ["json"] }
 base64 = "0.22"
 ring = "0.17"
 ciborium = "0.2"
+miniz_oxide = "0.8"

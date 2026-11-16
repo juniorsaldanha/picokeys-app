@@ -1,6 +1,7 @@
 // Prevents an extra console window on Windows in release.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod blobs;
 mod ctap;
 mod fido;
 mod migrate;
@@ -11,7 +12,7 @@ mod pico;
 mod ssh;
 
 use std::sync::Mutex;
-use types::{Board, FidoPolicy, LegacyKey, GitSetup, GitSigning, NewSshKey, SshEnv, SshKey, Device, FlashProgress, FwRelease, FidoInfo, NewOath, NewOtp, OathAccount, OtpSlot, Passkey, Phy, PicoInfo};
+use types::{Board, FidoPolicy, LargeBlobs, LegacyKey, GitSetup, GitSigning, NewSshKey, SshEnv, SshKey, Device, FlashProgress, FwRelease, FidoInfo, NewOath, NewOtp, OathAccount, OtpSlot, Passkey, Phy, PicoInfo};
 
 /// One device conversation at a time: Pico firmware wedges if HID (CTAP) and
 /// CCID (rescue) requests overlap.
@@ -95,6 +96,16 @@ async fn fido_policy(path: String, pin: String, change: FidoPolicy) -> Result<()
         }
     })
     .await
+}
+
+#[tauri::command]
+async fn large_blobs(path: String, pin: String) -> Result<LargeBlobs, String> {
+    blocking(move || blobs::list(&path, &pin)).await
+}
+
+#[tauri::command]
+async fn large_blob_delete(path: String, pin: String, index: u32) -> Result<(), String> {
+    blocking(move || blobs::delete(&path, &pin, index)).await
 }
 
 #[tauri::command]
@@ -256,7 +267,9 @@ fn main() {
             fido_policy,
             pico_time,
             pico_sync_time,
-            save_text, oath_list, oath_calculate, oath_add, oath_delete,
+            save_text,
+            large_blobs,
+            large_blob_delete, oath_list, oath_calculate, oath_add, oath_delete,
             otp_status, otp_configure, otp_delete, otp_swap, random_hex, fw_releases, fw_flash,
             ssh_env, ssh_install_openssh, ssh_keys, ssh_generate, ssh_recover, ssh_git_setup, ssh_add_host, ssh_test,
             ssh_inventory, ssh_authorize, ssh_check, ssh_switch_config, ssh_archive

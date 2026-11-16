@@ -52,6 +52,8 @@ pub fn info(path: &str) -> R<FidoInfo> {
         min_pin_length: i.min_pin_length,
         remaining_passkeys: i.remaining_discoverable_credentials,
         max_msg_size: i.max_msg_size,
+        max_large_blob: i.max_serialized_large_blob_array,
+        max_cred_blob: i.max_cred_blob_length,
     })
 }
 

@@ -199,6 +199,24 @@ fn OverviewBody(info: FidoInfo) -> Element {
                 }
                 Card {
                     CardHeader {
+                        CardTitle { "Limits" }
+                    }
+                    CardContent { class: "flex flex-col gap-1.5 text-sm",
+                        for (label , v) in [
+                            ("Passkeys left", info.remaining_passkeys.to_string()),
+                            ("Large blob storage", format!("{} bytes", info.max_large_blob)),
+                            ("credBlob per passkey", format!("{} bytes", info.max_cred_blob)),
+                            ("Max message", format!("{} bytes", info.max_msg_size)),
+                        ] {
+                            div { key: "{label}", class: "flex justify-between gap-3",
+                                span { class: "text-muted-foreground", "{label}" }
+                                span { class: "font-medium tabular-nums", "{v}" }
+                            }
+                        }
+                    }
+                }
+                Card {
+                    CardHeader {
                         CardTitle { "AAGUID" }
                     }
                     CardContent {
@@ -468,6 +486,7 @@ fn PasskeyList() -> Element {
             div { class: "mb-4", ErrorBox { title: "Delete failed", msg: e } }
         }
         {body}
+        crate::policy::LargeBlobsCard {}
     }
 }
 

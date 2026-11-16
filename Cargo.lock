@@ -4121,6 +4121,7 @@ dependencies = [
  "espflash",
  "getrandom 0.3.4",
  "hidapi",
+ "miniz_oxide 0.8.9",
  "pcsc",
  "ring",
  "serde",

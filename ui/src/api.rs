@@ -287,3 +287,16 @@ struct SaveArgs<'a> {
 pub async fn save_text(name: &str, content: &str) -> Result<String, String> {
     call("save_text", SaveArgs { name, content }).await
 }
+
+pub async fn large_blobs(path: &str, pin: &str) -> Result<types::LargeBlobs, String> {
+    call("large_blobs", Args { path: Some(path), pin: Some(pin), ..NONE }).await
+}
+#[derive(Serialize)]
+struct BlobDel<'a> {
+    path: &'a str,
+    pin: &'a str,
+    index: u32,
+}
+pub async fn large_blob_delete(path: &str, pin: &str, index: u32) -> Result<(), String> {
+    call("large_blob_delete", BlobDel { path, pin, index }).await
+}
