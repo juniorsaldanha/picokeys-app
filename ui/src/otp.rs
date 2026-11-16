@@ -1,4 +1,4 @@
-//! OTP slots page: what the key types/answers on a short (slot 1) or long (slot 2) touch.
+//! OTP slots page: what the key types/answers when you press its button 1–4 times.
 use crate::api;
 use crate::pages::{ErrorBox, PageHeader, humanize};
 use dioxus::prelude::*;
@@ -19,6 +19,12 @@ pub fn OtpPage() -> Element {
     let mut slots = use_resource(api::otp_status);
     let mut swapping = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
+    let info = use_resource(api::pico_info);
+    // Missing PHY setting = all interfaces on.
+    let kb_on = match &*info.read() {
+        Some(Ok(i)) => i.phy.enabled_usb_itf.unwrap_or(types::Phy::ITF_ALL) & types::Phy::ITF_KB != 0,
+        _ => true,
+    };
 
     let swap = move |_| async move {
         swapping.set(true);
@@ -41,18 +47,22 @@ pub fn OtpPage() -> Element {
         Some(Err(e)) => rsx! { ErrorBox { title: "Couldn't read OTP slots", msg: humanize(e) } },
         None => rsx! {
             div { class: "grid gap-4 lg:grid-cols-2",
-                Skeleton { class: "h-44 rounded-xl" }
-                Skeleton { class: "h-44 rounded-xl" }
+                for _ in 0..4 { Skeleton { class: "h-44 rounded-xl" } }
             }
         },
     };
 
     rsx! {
-        PageHeader { title: "OTP slots", subtitle: "What the key types or answers when you touch it briefly or hold it.",
+        PageHeader { title: "OTP slots", subtitle: "What the key types or answers when you press its button 1, 2, 3 or 4 times.",
             Button { variant: ButtonVariant::Outline, size: ButtonSize::Sm, onclick: move |_| slots.restart(), RefreshCw {} "Refresh" }
             Button { variant: ButtonVariant::Outline, size: ButtonSize::Sm, disabled: swapping(), onclick: swap,
                 if swapping() { Spinner {} } else { ArrowUpDown {} }
-                "Swap slots"
+                "Swap 1 ↔ 2"
+            }
+        }
+        if !kb_on {
+            div { class: "mb-4 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm",
+                "The keyboard interface is off, so the key can't type OTPs (challenge-response still works). Turn on Keyboard under Device → Configuration, then replug the key."
             }
         }
         if let Some(e) = error() { p { class: "mb-4 text-sm text-destructive", "{e}" } }
@@ -77,7 +87,11 @@ fn SlotCard(slot: OtpSlot, on_change: EventHandler<()>) -> Element {
     let mut busy = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
     let n = slot.slot;
-    let (title, gesture) = if n == 1 { ("Slot 1", "Short touch") } else { ("Slot 2", "Long touch (hold ~3 s)") };
+    let title = format!("Slot {n}");
+    let gesture = match n {
+        1 => "Press once".to_string(),
+        n => format!("Press {n} times quickly"),
+    };
 
     let delete = move |_| async move {
         busy.set(true);

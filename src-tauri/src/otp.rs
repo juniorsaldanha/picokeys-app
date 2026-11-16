@@ -8,7 +8,7 @@ type R<T> = Result<T, String>;
 
 const AID: [u8; 7] = [0xA0, 0x00, 0x00, 0x05, 0x27, 0x20, 0x01];
 const INS: u8 = 0x01;
-const CMD_CONFIG: [u8; 2] = [0x01, 0x03]; // slot 1, slot 2
+const CMD_CONFIG: u8 = 0x01; // P2 = slot - 1 (pico-fido has 4 slots)
 const CMD_SWAP: u8 = 0x06;
 const CMD_STATUS_EXT: u8 = 0x14;
 
@@ -59,7 +59,7 @@ pub fn status() -> R<Vec<OtpSlot>> {
     let card = open()?;
     let ext = card.apdu(&apdu(CMD_STATUS_EXT, &[]))?;
     let mut slots: Vec<OtpSlot> =
-        (1..=2).map(|slot| OtpSlot { slot, kind: None, touch: false, public_id: None }).collect();
+        (1..=4).map(|slot| OtpSlot { slot, kind: None, touch: false, public_id: None }).collect();
     for (tag, v) in tlvs(&ext) {
         let Some(s) = slots.get_mut((tag.wrapping_sub(0xB0)) as usize) else { continue };
         for (t, d) in tlvs(v) {
@@ -137,9 +137,13 @@ pub fn delete(slot: u8) -> R<()> {
 }
 
 fn write(slot: u8, mut cfg: Vec<u8>) -> R<()> {
-    let p1 = *CMD_CONFIG.get(slot as usize - 1).ok_or("Slot must be 1 or 2.")?;
+    if !(1..=4).contains(&slot) {
+        return Err("Slot must be 1–4.".into());
+    }
     cfg.extend_from_slice(&[0u8; ACC_CODE_SIZE]);
-    open()?.apdu(&apdu(p1, &cfg)).map(|_| ())
+    let mut cmd = apdu(CMD_CONFIG, &cfg);
+    cmd[3] = slot - 1;
+    open()?.apdu(&cmd).map(|_| ())
 }
 
 pub fn swap() -> R<()> {
@@ -235,5 +239,14 @@ mod tests {
         assert!(status().unwrap()[1].kind.is_none());
         // HMAC-SHA1(key, "hello"), from `openssl dgst -sha1 -mac HMAC -macopt hexkey:0102..14`
         assert_eq!(crate::fido::hex(&rsp), "61232556fab861c4f772dcc4ae3f1968632025a0");
+    }
+
+    /// Read-only: lists all four slots.
+    #[test]
+    #[ignore]
+    fn otp_status_live() {
+        let s = status().unwrap();
+        println!("{s:?}");
+        assert_eq!(s.len(), 4);
     }
 }
