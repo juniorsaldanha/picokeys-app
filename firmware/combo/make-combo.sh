@@ -3,7 +3,8 @@
 # from upstream checkouts: make-combo.sh <pico-fido> <pico-openpgp> <out dir>
 # The FIDO tree (and its newer pico-keys-sdk) is the base; the OpenPGP/PIV applets are added.
 # Clashes resolved: one management applet (FIDO's), PIV's cmd_version renamed, one product id
-# (FIDO's, so the app and tools still see "Pico FIDO"), one merged file table (merge_files.py).
+# (FIDO's, so the app and tools still see "Pico FIDO"), one merged file table (merge_files.py),
+# and OpenPGP's runtime file ids moved out of FIDO's range.
 FIDO=$(cd "$1" && pwd) PGP=$(cd "$2" && pwd) OUT=$3 HERE=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$OUT"
 rsync -a --delete --exclude '/build*' --exclude '.git' "$FIDO"/ "$OUT"/
@@ -11,7 +12,12 @@ rsync -a "$PGP/src/openpgp" "$PGP/src/piv" "$OUT/src/"
 rm "$OUT/src/openpgp/management.c" "$OUT/src/openpgp/management.h"
 sed -i.bak 's/\bcmd_version\b/piv_cmd_version/' "$OUT/src/piv/cmd_version.c" "$OUT/src/piv/piv.h" "$OUT/src/openpgp/piv.c"
 sed -i.bak '/^uint8_t PICO_\(PRODUCT\|VERSION_MAJOR\|VERSION_MINOR\) =/d' "$OUT/src/openpgp/defs.c"
-python3 "$HERE/merge_files.py" "$FIDO/src/fido" "$PGP/src/openpgp/files.c" > "$OUT/src/openpgp/files.c"
+# OpenPGP's key containers live at (0xD0..0xD5 << 8 | key), on top of FIDO's resident containers
+# (0xD0..0xDD, 0xE0..0xE3): move them to 0xF0..0xF5, which nothing else in the tree generates
+sed -i.bak -E 's/^(#define OPENPGP_KEY_[A-Z0-9_]+_PREFIX) 0xd([0-5])u/\1 0xf\2u/' "$OUT/src/openpgp/key_container.c"
+[ "$(grep -c '_PREFIX 0xf[0-5]u' "$OUT/src/openpgp/key_container.c")" = 6 ] || { echo "OpenPGP prefixes not relocated" >&2; exit 1; }
+python3 "$HERE/merge_files.py" "$OUT/src/fido" "$OUT/src/openpgp/files.c" > "$OUT/src/openpgp/files.c.new"
+mv "$OUT/src/openpgp/files.c.new" "$OUT/src/openpgp/files.c"
 rm "$OUT/src/fido/files.c"
 # ESP-IDF builds the firmware as the src/fido component: export the OpenPGP/PIV headers too
 sed -i.bak 's#INCLUDE_DIRS \.#INCLUDE_DIRS ../openpgp ../piv .#' "$OUT/src/fido/CMakeLists.txt"
@@ -34,6 +40,8 @@ assert old in s, "include block"
 s = s.replace(old, "set(INCLUDES ${INCLUDES}\n    ${CMAKE_CURRENT_LIST_DIR}/src/openpgp\n    ${CMAKE_CURRENT_LIST_DIR}/src/piv\n    ${CMAKE_CURRENT_LIST_DIR}/src/fido\n)", 1)
 # OpenPGP needs CCID (FIDO only turns it on with OATH/OTP) and libcvc (PIV attestation)
 s = s.replace("include(pico-keys-sdk/picokeys_sdk_import.cmake)", "set(USB_ITF_CCID 1)\nset(USB_ITF_WCID 1)\nset(ENABLE_LIBCVC 1)\ninclude(pico-keys-sdk/picokeys_sdk_import.cmake)", 1)
+# as upstream pico-openpgp: the Gnuk-style admin-less PIN mode is on for non-ESP builds only
+s = s.replace("include(pico-keys-sdk/picokeys_sdk_import.cmake)", "include(pico-keys-sdk/picokeys_sdk_import.cmake)\nif(NOT ESP_PLATFORM)\n    add_compile_definitions(ENABLE_ADMINLESS_MODE=1)\nendif()", 1)
 open(p, "w").write(s)
 PY
 echo "combo tree in $OUT"
