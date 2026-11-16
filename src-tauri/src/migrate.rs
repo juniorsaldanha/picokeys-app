@@ -32,7 +32,8 @@ fn private_of(p: &Path) -> PathBuf {
 /// `~/.ssh/x` form for paths under home, so edited config stays portable.
 fn tilde(p: &Path) -> String {
     match home().ok().and_then(|h| p.strip_prefix(&h).ok().map(|r| r.to_path_buf())) {
-        Some(r) => format!("~/{}", r.display()),
+        // ssh config paths use '/', also on Windows
+        Some(r) => format!("~/{}", r.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")),
         None => p.display().to_string(),
     }
 }
