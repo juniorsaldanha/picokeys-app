@@ -669,6 +669,15 @@ mod tests {
         flash(&a.url, Board::Esp32S3, &mut |p| if p.done == 0 || p.done == p.total { println!("{} {}/{}", p.stage, p.done, p.total) }).unwrap();
     }
 
+    /// Real key (rewrites everything after the bootloader): what the Restore button runs.
+    /// `PKM_RESTORE=<backup made by the app> cargo test -p picokeys-app -- --ignored live_restore --nocapture`
+    #[test]
+    #[ignore]
+    fn live_restore() {
+        let path = std::env::var("PKM_RESTORE").unwrap();
+        restore_esp(&path, Board::Esp32S3, &mut |p| if p.done == 0 || p.done == p.total { println!("{} {}/{}", p.stage, p.done, p.total) }).unwrap();
+    }
+
     #[test]
     fn backup_names() {
         assert_eq!(utc_stamp(0), "19700101-000000");
