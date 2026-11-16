@@ -5,7 +5,7 @@
 //! CLA 0x80, INS 0x1E READ (P1 1=PHY, 2=flash, 3=secure boot), INS 0x1C WRITE (P1 1=PHY).
 use pcsc::{Context, Protocols, Scope, ShareMode};
 use std::ffi::CString;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use types::{Flash, Phy, PicoInfo, SecureBoot};
 
 type R<T> = Result<T, String>;
@@ -250,59 +250,37 @@ fn serialize_phy(p: &Phy) -> R<Vec<u8>> {
 // power-up and after a button press.
 // ---------------------------------------------------------------------------
 
-const CTAPHID_INIT: u8 = 0x86;
-const CTAPHID_CBOR: u8 = 0x90;
-const CTAPHID_KEEPALIVE: u8 = 0xBB;
-const CTAPHID_ERROR: u8 = 0xBF;
-
 pub fn fido_reset(path: &str) -> R<()> {
-    let api = hidapi::HidApi::new().map_err(|e| e.to_string())?;
-    let dev = api.open_path(&CString::new(path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-
-    let send = |cid: [u8; 4], cmd: u8, data: &[u8]| -> R<()> {
-        let mut pkt = [0u8; 65]; // report id 0 + 64
-        pkt[1..5].copy_from_slice(&cid);
-        pkt[5] = cmd;
-        pkt[6..8].copy_from_slice(&(data.len() as u16).to_be_bytes());
-        pkt[8..8 + data.len()].copy_from_slice(data);
-        dev.write(&pkt).map(|_| ()).map_err(|e| e.to_string())
-    };
-    let recv = |cid: [u8; 4], deadline: Instant| -> R<(u8, Vec<u8>)> {
-        let mut buf = [0u8; 64];
-        loop {
-            if Instant::now() > deadline {
-                return Err("Timed out waiting for the key.".into());
-            }
-            let n = dev.read_timeout(&mut buf, 250).map_err(|e| e.to_string())?;
-            if n < 7 || buf[0..4] != cid {
-                continue;
-            }
-            if buf[4] == CTAPHID_KEEPALIVE {
-                continue; // waiting for touch
-            }
-            let len = u16::from_be_bytes([buf[5], buf[6]]) as usize;
-            return Ok((buf[4], buf[7..7 + len.min(57)].to_vec()));
-        }
-    };
-
-    let nonce: [u8; 8] = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as u64).to_be_bytes();
-    send([0xFF; 4], CTAPHID_INIT, &nonce)?;
-    let (_, init) = recv([0xFF; 4], Instant::now() + Duration::from_secs(2))?;
-    if init.len() < 12 || init[..8] != nonce {
-        return Err("CTAPHID init failed".into());
+    use crate::ctap::{CTAPHID_CBOR, transact};
+    let (_, rsp) = transact(path, CTAPHID_CBOR, &[0x07], Duration::from_secs(40))?;
+    match rsp.first() {
+        Some(0x00) => Ok(()),
+        Some(0x30) => Err("Reset is only allowed within 10 seconds of plugging in the key. Replug it and try again.".into()),
+        Some(0x2F) => Err("No touch detected. Try again and touch the key when it blinks.".into()),
+        Some(0x27) => Err("Reset was denied on the key.".into()),
+        Some(s) => Err(format!("Reset failed (CTAP error 0x{s:02X})")),
+        None => Err("Unexpected reply to reset".into()),
     }
-    let cid: [u8; 4] = init[8..12].try_into().unwrap();
+}
 
-    send(cid, CTAPHID_CBOR, &[0x07])?;
-    let (cmd, rsp) = recv(cid, Instant::now() + Duration::from_secs(40))?;
-    match (cmd, rsp.first()) {
-        (CTAPHID_CBOR, Some(0x00)) => Ok(()),
-        (CTAPHID_CBOR, Some(0x30)) => Err("Reset is only allowed within 10 seconds of plugging in the key. Replug it and try again.".into()),
-        (CTAPHID_CBOR, Some(0x2F)) => Err("No touch detected. Try again and touch the key when it blinks.".into()),
-        (CTAPHID_CBOR, Some(0x27)) => Err("Reset was denied on the key.".into()),
-        (CTAPHID_CBOR, Some(s)) => Err(format!("Reset failed (CTAP error 0x{s:02X})")),
-        (CTAPHID_ERROR, e) => Err(format!("CTAPHID error {e:?}")),
-        _ => Err("Unexpected reply to reset".into()),
+/// Set the key's clock to now (Unix seconds). The key forgets it when unplugged.
+pub fn set_time() -> R<()> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_secs() as u32;
+    let card = Card::open()?;
+    card.select()?;
+    let mut cmd = vec![0x80, 0x1C, 0x02, 0x02, 4];
+    cmd.extend_from_slice(&now.to_be_bytes());
+    card.apdu(&cmd).map(|_| ())
+}
+
+/// The key's clock (Unix seconds), or None if it hasn't been set since power-up.
+pub fn get_time() -> R<Option<u32>> {
+    let card = Card::open()?;
+    card.select()?;
+    match card.apdu(&[0x80, 0x1E, 0x04, 0x02, 0x00]) {
+        Ok(d) => Ok(be32(&d, 0)),
+        Err(e) if e.starts_with("Not confirmed") => Ok(None), // 6985: clock never set
+        Err(e) => Err(e),
     }
 }
 

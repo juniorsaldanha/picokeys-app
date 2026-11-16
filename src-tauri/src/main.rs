@@ -1,6 +1,7 @@
 // Prevents an extra console window on Windows in release.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ctap;
 mod fido;
 mod migrate;
 mod firmware;
@@ -10,7 +11,7 @@ mod pico;
 mod ssh;
 
 use std::sync::Mutex;
-use types::{Board, LegacyKey, GitSetup, GitSigning, NewSshKey, SshEnv, SshKey, Device, FlashProgress, FwRelease, FidoInfo, NewOath, NewOtp, OathAccount, OtpSlot, Passkey, Phy, PicoInfo};
+use types::{Board, FidoPolicy, LegacyKey, GitSetup, GitSigning, NewSshKey, SshEnv, SshKey, Device, FlashProgress, FwRelease, FidoInfo, NewOath, NewOtp, OathAccount, OtpSlot, Passkey, Phy, PicoInfo};
 
 /// One device conversation at a time: Pico firmware wedges if HID (CTAP) and
 /// CCID (rescue) requests overlap.
@@ -76,6 +77,51 @@ async fn write_phy(phy: Phy) -> Result<(), String> {
 #[tauri::command]
 async fn fido_reset(path: String) -> Result<(), String> {
     blocking(move || pico::fido_reset(&path)).await
+}
+
+#[tauri::command]
+async fn fido_policy(path: String, pin: String, change: FidoPolicy) -> Result<(), String> {
+    blocking(move || {
+        let (p, n) = (path.as_str(), pin.as_str());
+        match change {
+            FidoPolicy::AlwaysUv => ctap::toggle_always_uv(p, n),
+            FidoPolicy::EnterpriseAttestation => ctap::enable_enterprise_attestation(p, n),
+            FidoPolicy::MinPin { len, rp_ids, force_change } => ctap::set_min_pin(p, n, len, &rp_ids, force_change),
+            FidoPolicy::Toggle { which } => ctap::toggle(p, n, &which),
+            FidoPolicy::PinComplexity { bits } => ctap::pin_policy(p, n, bits),
+            FidoPolicy::Revoke { cred_id } => ctap::revoke(p, n, &cred_id),
+            FidoPolicy::Expire { cred_id, unix } => ctap::expire(p, n, &cred_id, unix),
+            FidoPolicy::Touch { cred_id, required } => ctap::button(p, n, &cred_id, required),
+        }
+    })
+    .await
+}
+
+#[tauri::command]
+async fn pico_time() -> Result<Option<u32>, String> {
+    blocking(pico::get_time).await
+}
+
+#[tauri::command]
+async fn pico_sync_time() -> Result<(), String> {
+    blocking(pico::set_time).await
+}
+
+/// Saves an export into ~/Downloads without overwriting; returns the path.
+#[tauri::command]
+async fn save_text(name: String, content: String) -> Result<String, String> {
+    let name: String = name.chars().filter(|c| c.is_ascii_alphanumeric() || "-_.".contains(*c)).collect();
+    let (stem, ext) = name.rsplit_once('.').unwrap_or((&name, "txt"));
+    let dir = ssh::home()?.join("Downloads");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut path = dir.join(format!("{stem}.{ext}"));
+    let mut n = 1;
+    while path.exists() {
+        path = dir.join(format!("{stem}-{n}.{ext}"));
+        n += 1;
+    }
+    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+    Ok(path.display().to_string())
 }
 
 #[tauri::command]
@@ -206,7 +252,11 @@ fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             list_devices, fido_info, set_pin, change_pin, list_passkeys, delete_passkey, wink,
-            pico_info, write_phy, fido_reset, oath_list, oath_calculate, oath_add, oath_delete,
+            pico_info, write_phy, fido_reset,
+            fido_policy,
+            pico_time,
+            pico_sync_time,
+            save_text, oath_list, oath_calculate, oath_add, oath_delete,
             otp_status, otp_configure, otp_delete, otp_swap, random_hex, fw_releases, fw_flash,
             ssh_env, ssh_install_openssh, ssh_keys, ssh_generate, ssh_recover, ssh_git_setup, ssh_add_host, ssh_test,
             ssh_inventory, ssh_authorize, ssh_check, ssh_switch_config, ssh_archive

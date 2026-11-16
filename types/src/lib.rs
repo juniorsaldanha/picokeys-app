@@ -443,3 +443,21 @@ pub struct LegacyKey {
     /// Hosts known not to accept security-key SSH keys.
     pub unsupported: Vec<String>,
 }
+
+/// authenticatorConfig changes and pico-fido per-passkey controls (all need the PIN).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "op")]
+pub enum FidoPolicy {
+    /// Flip "always require PIN" (alwaysUv).
+    AlwaysUv,
+    EnterpriseAttestation,
+    MinPin { len: u32, rp_ids: Vec<String>, force_change: bool },
+    /// "nork" (discoverable passkeys) or "mcuv" (makeCredUvNotRqd); flips the current value.
+    Toggle { which: String },
+    /// 1 upper, 2 lower, 4 digit, 8 symbol.
+    PinComplexity { bits: u16 },
+    Revoke { cred_id: String },
+    /// Unix seconds; 0 clears.
+    Expire { cred_id: String, unix: u32 },
+    Touch { cred_id: String, required: bool },
+}

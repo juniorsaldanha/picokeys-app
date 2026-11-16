@@ -51,6 +51,39 @@ fn Row(label: &'static str, children: Element) -> Element {
     }
 }
 
+/// The key's clock is only used for passkey expiry and is lost when unplugged.
+#[component]
+fn ClockRow() -> Element {
+    let mut t = use_resource(api::pico_time);
+    let mut busy = use_signal(|| false);
+    let text = match &*t.read() {
+        Some(Ok(Some(secs))) => {
+            let d = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(*secs as f64 * 1000.0));
+            String::from(d.to_locale_string("default", &wasm_bindgen::JsValue::UNDEFINED))
+        }
+        Some(Ok(None)) => "Not set".into(),
+        Some(Err(_)) => "Unavailable".into(),
+        None => "…".into(),
+    };
+    rsx! {
+        div { class: "flex items-center justify-between gap-3 py-1 text-sm",
+            span { class: "text-muted-foreground", "Clock" }
+            span { class: "flex items-center gap-2",
+                span { class: "font-medium", "{text}" }
+                Button { variant: ButtonVariant::Ghost, size: ButtonSize::Sm, class: "h-7 px-2", disabled: busy(),
+                    onclick: move |_| async move {
+                        busy.set(true);
+                        let _ = api::pico_sync_time().await;
+                        t.restart();
+                        busy.set(false);
+                    },
+                    "Sync"
+                }
+            }
+        }
+    }
+}
+
 #[component]
 fn DeviceBody(info: PicoInfo) -> Element {
     rsx! {
@@ -63,6 +96,7 @@ fn DeviceBody(info: PicoInfo) -> Element {
                     Row { label: "Chip", "{info.mcu}" }
                     if let Some(b) = info.build { Row { label: "Build", "{b}" } }
                     Row { label: "Serial", code { class: "font-mono text-xs", "{info.serial}" } }
+                    ClockRow {}
                 }
             }
             Card {

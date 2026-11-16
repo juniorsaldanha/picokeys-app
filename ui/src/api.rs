@@ -262,3 +262,28 @@ pub async fn ssh_switch_config(old: &str, key: &str) -> Result<Vec<String>, Stri
 pub async fn ssh_archive(old: &str) -> Result<String, String> {
     call("ssh_archive", OldArgs { old, key: None }).await
 }
+
+#[derive(Serialize)]
+struct PolicyArgs<'a> {
+    path: &'a str,
+    pin: &'a str,
+    change: &'a types::FidoPolicy,
+}
+pub async fn fido_policy(path: &str, pin: &str, change: &types::FidoPolicy) -> Result<(), String> {
+    call("fido_policy", PolicyArgs { path, pin, change }).await
+}
+pub async fn pico_time() -> Result<Option<u32>, String> {
+    call("pico_time", NONE).await
+}
+pub async fn pico_sync_time() -> Result<(), String> {
+    call("pico_sync_time", NONE).await
+}
+#[derive(Serialize)]
+struct SaveArgs<'a> {
+    name: &'a str,
+    content: &'a str,
+}
+/// Writes to ~/Downloads (unique name); returns the full path.
+pub async fn save_text(name: &str, content: &str) -> Result<String, String> {
+    call("save_text", SaveArgs { name, content }).await
+}

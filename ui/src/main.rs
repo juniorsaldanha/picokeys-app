@@ -5,6 +5,7 @@ mod migrate;
 mod oath;
 mod otp;
 mod pages;
+mod policy;
 mod ssh;
 mod ui;
 

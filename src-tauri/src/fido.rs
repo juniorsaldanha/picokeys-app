@@ -17,7 +17,7 @@ fn cfg() -> LibCfg {
     c
 }
 
-fn open(path: &str) -> R<FidoKeyHid> {
+pub(crate) fn open(path: &str) -> R<FidoKeyHid> {
     FidoKeyHid::new(&[HidParam::Path(path.into())], &cfg()).map_err(err)
 }
 
@@ -87,6 +87,10 @@ pub fn passkeys(path: &str, pin: &str) -> R<Vec<Passkey>> {
 pub fn delete_passkey(path: &str, pin: &str, cred_id: &str) -> R<()> {
     let pkcd = PublicKeyCredentialDescriptor { id: unhex(cred_id)?, ctype: "public-key".into() };
     open(path)?.credential_management_delete_credential(Some(pin), pkcd).map_err(err)
+}
+
+pub(crate) fn pin_err(e: &str) -> String {
+    e.to_string() // ui::pages::humanize maps the CTAP codes
 }
 
 pub fn wink(path: &str) -> R<()> {

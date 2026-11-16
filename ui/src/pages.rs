@@ -1,6 +1,6 @@
 use crate::{AppState, api};
 use dioxus::prelude::*;
-use icons::{Check, CircleCheck, Cpu, KeyRound, Lightbulb, Lock, RefreshCw, Search, ShieldCheck, Trash2, TriangleAlert};
+use icons::{Check, CircleCheck, Cpu, Download, KeyRound, Lightbulb, Lock, RefreshCw, Search, ShieldCheck, Trash2, TriangleAlert};
 use types::{FidoInfo, Passkey};
 
 use crate::ui::alert::{Alert, AlertDescription, AlertTitle, AlertVariant};
@@ -305,6 +305,11 @@ fn PasskeyList() -> Element {
     let mut confirm = use_signal(|| None::<String>);
     let mut deleting = use_signal(|| None::<String>);
     let mut error = use_signal(|| None::<String>);
+    let mut selected = use_signal(Vec::<String>::new);
+    let mut open = use_signal(|| None::<String>);
+    let mut bulk_armed = use_signal(|| false);
+    let mut bulk_busy = use_signal(|| false);
+    let mut saved = use_signal(|| None::<String>);
 
     let mut list = use_resource(move || async move {
         let d = (st.device)()?;
@@ -322,6 +327,47 @@ fn PasskeyList() -> Element {
         }
         confirm.set(None);
         deleting.set(None);
+    };
+
+    let bulk_delete = move |_| async move {
+        let (Some(d), Some(p)) = (st.device.peek().clone(), st.pin.peek().clone()) else { return };
+        bulk_busy.set(true);
+        error.set(None);
+        let ids = selected.peek().clone();
+        let mut failed = 0;
+        for id in &ids {
+            if api::delete_passkey(&d.path, &p, id).await.is_err() {
+                failed += 1;
+            }
+        }
+        if failed > 0 {
+            error.set(Some(format!("{failed} of {} passkeys couldn't be deleted.", ids.len())));
+        }
+        selected.set(vec![]);
+        bulk_armed.set(false);
+        bulk_busy.set(false);
+        list.restart();
+    };
+
+    let export = move |json: bool| async move {
+        let Some(Some(Ok(keys))) = &*list.peek() else { return };
+        let csv_field = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
+        let content = if json {
+            serde_json_lite(keys)
+        } else {
+            let mut out = String::from("rp_id,rp_name,user_name,user_display_name,credential_id,cred_protect\n");
+            for k in keys {
+                let row = [&k.rp_id, &k.rp_name, &k.user_name, &k.user_display_name, &k.cred_id, &k.cred_protect];
+                out += &row.iter().map(|f| csv_field(f)).collect::<Vec<_>>().join(",");
+                out.push('\n');
+            }
+            out
+        };
+        let name = if json { "passkeys.json" } else { "passkeys.csv" };
+        match api::save_text(name, &content).await {
+            Ok(path) => saved.set(Some(format!("Saved to {path}"))),
+            Err(e) => error.set(Some(e)),
+        }
     };
 
     let body = match &*list.read() {
@@ -351,6 +397,27 @@ fn PasskeyList() -> Element {
                         }
                     }
                     Badge { variant: BadgeVariant::Secondary, size: crate::ui::badge::BadgeSize::Lg, "{total} total" }
+                    Button { variant: ButtonVariant::Outline, size: ButtonSize::Sm, disabled: total == 0, onclick: move |_| { spawn(export(false)); }, Download {} "CSV" }
+                    Button { variant: ButtonVariant::Outline, size: ButtonSize::Sm, disabled: total == 0, onclick: move |_| { spawn(export(true)); }, Download {} "JSON" }
+                }
+                if let Some(m) = saved() { p { class: "selectable mb-3 text-sm text-success", "{m}" } }
+                if !selected.read().is_empty() {
+                    div { class: "mb-3 flex items-center gap-2 rounded-lg border bg-muted/40 px-4 py-2 text-sm animate-in fade-in",
+                        span { "{selected.read().len()} selected" }
+                        Button { variant: ButtonVariant::Ghost, size: ButtonSize::Sm, onclick: move |_| { selected.set(vec![]); bulk_armed.set(false); }, "Clear" }
+                        div { class: "ml-auto flex items-center gap-2",
+                            if bulk_armed() {
+                                span { class: "text-muted-foreground", "Delete permanently?" }
+                                Button { variant: ButtonVariant::Ghost, size: ButtonSize::Sm, onclick: move |_| bulk_armed.set(false), "Cancel" }
+                                Button { variant: ButtonVariant::Destructive, size: ButtonSize::Sm, disabled: bulk_busy(), onclick: bulk_delete,
+                                    if bulk_busy() { Spinner {} } else { Trash2 {} }
+                                    "Delete {selected.read().len()}"
+                                }
+                            } else {
+                                Button { variant: ButtonVariant::Destructive, size: ButtonSize::Sm, onclick: move |_| bulk_armed.set(true), Trash2 {} "Delete selected" }
+                            }
+                        }
+                    }
                 }
                 if total == 0 {
                     Empty { class: "py-16",
@@ -368,6 +435,11 @@ fn PasskeyList() -> Element {
                             PasskeyRow {
                                 key: "{k.cred_id}",
                                 passkey: k.clone(),
+                                selected: selected.read().contains(&k.cred_id),
+                                open: open.read().as_deref() == Some(k.cred_id.as_str()),
+                                on_select: move |(id, on): (String, bool)| selected.with_mut(|v| if on { v.push(id) } else { v.retain(|x| *x != id) }),
+                                on_open: move |id: String| open.set(if open.peek().as_deref() == Some(id.as_str()) { None } else { Some(id) }),
+                                on_change: move |_| list.restart(),
                                 confirming: confirm.read().as_deref() == Some(k.cred_id.as_str()),
                                 deleting: deleting.read().as_deref() == Some(k.cred_id.as_str()),
                                 on_ask: move |id| confirm.set(Some(id)),
@@ -402,6 +474,11 @@ fn PasskeyList() -> Element {
 #[component]
 fn PasskeyRow(
     passkey: Passkey,
+    selected: bool,
+    open: bool,
+    on_select: EventHandler<(String, bool)>,
+    on_open: EventHandler<String>,
+    on_change: EventHandler<()>,
     confirming: bool,
     deleting: bool,
     on_ask: EventHandler<String>,
@@ -422,12 +499,22 @@ fn PasskeyRow(
     };
     let id1 = k.cred_id.clone();
     let id2 = k.cred_id.clone();
+    let id3 = k.cred_id.clone();
+    let id4 = k.cred_id.clone();
     rsx! {
-        div { class: "group flex items-center gap-4 border-b px-5 py-3.5 transition-colors last:border-0 hover:bg-muted/40",
+        div { class: "border-b last:border-0",
+        div { class: "group flex items-center gap-4 px-5 py-3.5 transition-colors hover:bg-muted/40",
+            input {
+                r#type: "checkbox",
+                class: "size-4 shrink-0",
+                aria_label: "Select passkey",
+                checked: selected,
+                onchange: move |e: FormEvent| on_select.call((id3.clone(), e.checked())),
+            }
             div { class: "flex size-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-brand-from/15 to-brand-to/15 text-base font-semibold text-primary",
                 "{initial}"
             }
-            div { class: "min-w-0 flex-1",
+            div { class: "min-w-0 flex-1 cursor-pointer", onclick: move |_| on_open.call(id4.clone()),
                 div { class: "flex items-center gap-2",
                     span { class: "selectable truncate font-medium", "{k.rp_id}" }
                     if let Some((label, v)) = protect { Badge { variant: v, size: crate::ui::badge::BadgeSize::Sm, "{label}" } }
@@ -453,6 +540,22 @@ fn PasskeyRow(
                     Trash2 {}
                 }
             }
+        }
+        if open {
+            div { class: "flex flex-col gap-4 bg-muted/30 px-5 py-4 animate-in fade-in",
+                dl { class: "grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm",
+                    dt { class: "text-muted-foreground", "Site" }
+                    dd { class: "selectable", "{k.rp_name} ({k.rp_id})" }
+                    dt { class: "text-muted-foreground", "User" }
+                    dd { class: "selectable", "{user}" }
+                    dt { class: "text-muted-foreground", "Protection" }
+                    dd { "{k.cred_protect}" }
+                    dt { class: "text-muted-foreground", "Credential ID" }
+                    dd { class: "selectable break-all font-mono text-xs", "{k.cred_id}" }
+                }
+                crate::policy::PasskeyControls { cred_id: k.cred_id.clone(), on_change: move |_| on_change.call(()) }
+            }
+        }
         }
     }
 }
@@ -592,5 +695,25 @@ pub fn PinPage() -> Element {
                 }
             }
         }
+        if pin_set {
+            if let Some(Some(Ok(i))) = &*st.info.read() {
+                crate::policy::PolicyCard { info: i.clone() }
+            }
+        }
     }
+}
+
+/// Small JSON writer for the export (avoids pulling serde_json into the WASM bundle).
+fn serde_json_lite(keys: &[Passkey]) -> String {
+    let esc = |s: &str| s.chars().flat_map(|c| match c {
+        '"' => "\\\"".chars().collect::<Vec<_>>(),
+        '\\' => "\\\\".chars().collect(),
+        c if (c as u32) < 0x20 => format!("\\u{:04x}", c as u32).chars().collect(),
+        c => vec![c],
+    }).collect::<String>();
+    let items: Vec<String> = keys.iter().map(|k| format!(
+        "  {{\"rp_id\": \"{}\", \"rp_name\": \"{}\", \"user_name\": \"{}\", \"user_display_name\": \"{}\", \"credential_id\": \"{}\", \"cred_protect\": \"{}\"}}",
+        esc(&k.rp_id), esc(&k.rp_name), esc(&k.user_name), esc(&k.user_display_name), esc(&k.cred_id), esc(&k.cred_protect)
+    )).collect();
+    format!("[\n{}\n]\n", items.join(",\n"))
 }

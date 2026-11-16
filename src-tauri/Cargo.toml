@@ -19,3 +19,5 @@ espflash = { version = "4.7", default-features = false, features = ["serialport"
 serialport = "4.10"
 ureq = { version = "3", features = ["json"] }
 base64 = "0.22"
+ring = "0.17"
+ciborium = "0.2"
