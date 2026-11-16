@@ -434,3 +434,8 @@ struct HsmDeleteArgs<'a> {
 pub async fn hsm_delete_key(pin: &str, id: u8) -> Result<(), String> {
     call("hsm_delete_key", HsmDeleteArgs { pin, id }).await
 }
+
+/// Looks for an otpauth:// QR code on the screen(s).
+pub async fn oath_scan_screen() -> Result<String, String> {
+    call("oath_scan_screen", NONE).await
+}

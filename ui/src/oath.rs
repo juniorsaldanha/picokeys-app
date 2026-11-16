@@ -2,7 +2,7 @@
 use crate::api;
 use crate::pages::{ErrorBox, PageHeader, humanize};
 use dioxus::prelude::*;
-use icons::{Check, Copy, Fingerprint, Lock, Pencil, Plus, RefreshCw, Search, ShieldCheck, Trash2};
+use icons::{Check, Copy, Fingerprint, Lock, Pencil, Plus, RefreshCw, ScanQrCode, Search, ShieldCheck, Trash2};
 use types::{NewOath, OathAccount, OathAlg};
 
 use crate::ui::badge::{Badge, BadgeSize, BadgeVariant};
@@ -310,6 +310,7 @@ fn AddAccount(on_done: EventHandler<bool>) -> Element {
     let mut form = use_signal(NewOath::default);
     let mut uri = use_signal(String::new);
     let mut uri_error = use_signal(|| None::<String>);
+    let mut scanning = use_signal(|| false);
     let mut busy = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
 
@@ -330,6 +331,19 @@ fn AddAccount(on_done: EventHandler<bool>) -> Element {
         busy.set(false);
     };
 
+    let scan = move |_| async move {
+        scanning.set(true);
+        match api::oath_scan_screen().await.and_then(|u| NewOath::from_uri(&u).map(|n| (u, n))) {
+            Ok((u, n)) => {
+                uri.set(u);
+                form.set(n);
+                uri_error.set(None);
+            }
+            Err(e) => uri_error.set(Some(e)),
+        }
+        scanning.set(false);
+    };
+
     let select_cls = "h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50 dark:bg-input/30";
     let hotp = form.read().hotp;
 
@@ -343,8 +357,9 @@ fn AddAccount(on_done: EventHandler<bool>) -> Element {
                 CardContent { class: "flex flex-col gap-4",
                     div { class: "flex flex-col gap-1.5",
                         Label { "otpauth:// link" }
+                        div { class: "flex gap-2",
                         Input {
-                            class: "font-mono text-xs",
+                            class: "font-mono text-xs flex-1",
                             placeholder: "otpauth://totp/Example:alice@example.com?secret=…",
                             value: uri(),
                             oninput: move |e: FormEvent| {
@@ -360,6 +375,12 @@ fn AddAccount(on_done: EventHandler<bool>) -> Element {
                                 }
                             },
                         }
+                        Button { button_type: "button", variant: ButtonVariant::Outline, size: ButtonSize::Sm, class: "h-9 shrink-0", disabled: scanning(), onclick: scan,
+                            if scanning() { Spinner {} } else { ScanQrCode {} }
+                            "Scan screen"
+                        }
+                        }
+                        p { class: "text-xs text-muted-foreground", "Leave the website's QR code visible on screen, then press Scan screen." }
                         if let Some(e) = uri_error() { p { class: "text-xs text-destructive", "{e}" } }
                     }
                     Separator {}

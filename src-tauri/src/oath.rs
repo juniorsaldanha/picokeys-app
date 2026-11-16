@@ -350,3 +350,63 @@ mod tests {
         assert!(list().unwrap().iter().all(|a| a.name != n.key_name()));
     }
 }
+
+/// Finds an otpauth:// QR code on any screen (e.g. a website's 2FA setup page).
+pub fn scan_screen() -> R<String> {
+    let monitors = xcap::Monitor::all().map_err(|e| format!("Couldn't list screens: {e}"))?;
+    let mut other = false;
+    for m in monitors {
+        let img = m.capture_image().map_err(|e| {
+            format!("Couldn't capture the screen ({e}). On macOS, allow Screen Recording for this app in System Settings → Privacy & Security.")
+        })?;
+        match find_otpauth(xcap::image::DynamicImage::ImageRgba8(img).to_luma8()) {
+            Some(Ok(uri)) => return Ok(uri),
+            Some(Err(())) => other = true,
+            None => {}
+        }
+    }
+    Err(if other { "Found a QR code, but it isn't an authenticator (otpauth://) code." } else { "No QR code on screen. Show it fully, then try again." }.into())
+}
+
+/// Some(Ok(uri)) for an otpauth code, Some(Err) when only other QR codes are present.
+fn find_otpauth(gray: xcap::image::GrayImage) -> Option<Result<String, ()>> {
+    let mut img = rqrr::PreparedImage::prepare(gray);
+    let mut found = None;
+    for g in img.detect_grids() {
+        if let Ok((_, text)) = g.decode() {
+            if text.starts_with("otpauth://") {
+                return Some(Ok(text));
+            }
+            found = Some(Err(()));
+        }
+    }
+    found
+}
+
+#[cfg(test)]
+mod scan_tests {
+    #[test]
+    fn blank_screen_has_no_code() {
+        assert_eq!(super::find_otpauth(xcap::image::GrayImage::from_pixel(64, 64, xcap::image::Luma([255]))), None);
+    }
+
+    /// Renders a QR code (8 px modules, 4-module quiet zone) the way it'd look on screen.
+    fn screen_with(text: &str) -> xcap::image::GrayImage {
+        let code = qrcode::QrCode::new(text).unwrap();
+        let (w, colors) = (code.width() as u32, code.to_colors());
+        let (scale, pad) = (8, 4);
+        let side = (w + 2 * pad) * scale;
+        xcap::image::GrayImage::from_fn(side, side, |x, y| {
+            let (mx, my) = ((x / scale) as i64 - pad as i64, (y / scale) as i64 - pad as i64);
+            let dark = mx >= 0 && my >= 0 && mx < w as i64 && my < w as i64 && colors[(my as u32 * w + mx as u32) as usize] == qrcode::Color::Dark;
+            xcap::image::Luma([if dark { 0 } else { 255 }])
+        })
+    }
+
+    #[test]
+    fn decodes_otpauth_and_rejects_others() {
+        let uri = "otpauth://totp/Example:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example";
+        assert_eq!(super::find_otpauth(screen_with(uri)), Some(Ok(uri.to_string())));
+        assert_eq!(super::find_otpauth(screen_with("https://example.com")), Some(Err(())));
+    }
+}

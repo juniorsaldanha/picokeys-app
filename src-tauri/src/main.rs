@@ -212,6 +212,12 @@ async fn hsm_delete_key(pin: String, id: u8) -> Result<(), String> {
     blocking(move || hsm::delete_key(&pin, id)).await
 }
 
+/// Not under the device lock: it only reads the screen.
+#[tauri::command]
+async fn oath_scan_screen() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(oath::scan_screen).await.map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn pico_time() -> Result<Option<u32>, String> {
     blocking(pico::get_time).await
@@ -396,6 +402,7 @@ fn main() {
             pico_info, write_phy, fido_reset,
             fido_policy,
             pico_time,
+            oath_scan_screen,
             hsm_status,
             hsm_change_pin,
             hsm_unblock,
