@@ -12,17 +12,20 @@ use types::{Board, FlashProgress, FwAsset, FwRelease};
 
 type R<T> = Result<T, String>;
 
-const OWNER: &str = "polhenarejos";
 const MAX_IMAGE: usize = 16 * 1024 * 1024;
 const ESPRESSIF_VID: u16 = 0x303A;
 
+/// GitHub owner/repo per product: the official pico-keys firmwares, plus our unofficial
+/// Pico FIDO + OpenPGP build (ESP32-S3 app images only).
+const REPOS: [(&str, &str); 4] = [
+    ("fido", "polhenarejos/pico-fido"),
+    ("hsm", "polhenarejos/pico-hsm"),
+    ("openpgp", "polhenarejos/pico-openpgp"),
+    ("combo", "juniorsaldanha/pico-fido-openpgp"),
+];
+
 fn repo(product: &str) -> R<&'static str> {
-    match product {
-        "fido" => Ok("pico-fido"),
-        "hsm" => Ok("pico-hsm"),
-        "openpgp" => Ok("pico-openpgp"),
-        _ => Err("Unknown product.".into()),
-    }
+    REPOS.iter().find(|(p, _)| *p == product).map(|(_, r)| *r).ok_or_else(|| "Unknown product.".into())
 }
 
 #[derive(Deserialize)]
@@ -42,7 +45,7 @@ struct GhAsset {
 
 /// Stable releases that ship at least one generic board image, newest first.
 pub fn releases(product: &str) -> R<Vec<FwRelease>> {
-    let url = format!("https://api.github.com/repos/{OWNER}/{}/releases?per_page=30", repo(product)?);
+    let url = format!("https://api.github.com/repos/{}/releases?per_page=30", repo(product)?);
     let list: Vec<GhRelease> = ureq::get(&url)
         .header("Accept", "application/vnd.github+json")
         .call()
@@ -71,13 +74,10 @@ pub fn releases(product: &str) -> R<Vec<FwRelease>> {
     Ok(out)
 }
 
-/// Downloads an asset, only from the official repositories.
+/// Downloads an asset, only from the repositories in `REPOS`.
 fn download(url: &str, progress: &mut dyn FnMut(FlashProgress)) -> R<Vec<u8>> {
-    let official = ["pico-fido", "pico-hsm", "pico-openpgp"]
-        .iter()
-        .any(|r| url.starts_with(&format!("https://github.com/{OWNER}/{r}/releases/download/")));
-    if !official {
-        return Err("Only official pico-keys release files can be flashed.".into());
+    if !REPOS.iter().any(|(_, r)| url.starts_with(&format!("https://github.com/{r}/releases/download/"))) {
+        return Err("Only release files from the listed firmware repositories can be flashed.".into());
     }
     let mut rsp = ureq::get(url).call().map_err(|e| format!("Download failed: {e}"))?;
     let total = rsp.body().content_length().unwrap_or(0);
@@ -99,7 +99,7 @@ fn download(url: &str, progress: &mut dyn FnMut(FlashProgress)) -> R<Vec<u8>> {
 
 pub fn flash(url: &str, board: Board, progress: &mut dyn FnMut(FlashProgress)) -> R<()> {
     let data = download(url, progress)?;
-    if board.is_esp() { flash_esp(&data, board, false, progress) } else { flash_uf2(&data, board, progress) }
+    flash_data(&data, board, progress)
 }
 
 // ---------- ESP32 ----------
@@ -237,14 +237,20 @@ pub fn flash_file(path: &str, board: Board, progress: &mut dyn FnMut(FlashProgre
     if data.len() > MAX_IMAGE {
         return Err("Firmware file is unexpectedly large.".into());
     }
+    flash_data(&data, board, progress)
+}
+
+/// ESP32: a merged image (official releases) or a bare app image (custom builds, the unofficial
+/// release) for the app slot; RP2040/RP2350: a UF2.
+fn flash_data(data: &[u8], board: Board, progress: &mut dyn FnMut(FlashProgress)) -> R<()> {
     if board.is_esp() {
-        let app_only = esp_app_only(&data, board)?;
+        let app_only = esp_app_only(data, board)?;
         if app_only {
             progress(FlashProgress { stage: "App image: writing only the app slot at 0x20000".into(), done: 0, total: 0 });
         }
-        flash_esp(&data, board, app_only, progress)
+        flash_esp(data, board, app_only, progress)
     } else {
-        flash_uf2(&data, board, progress)
+        flash_uf2(data, board, progress)
     }
 }
 
@@ -479,5 +485,16 @@ mod tests {
             if a.board.is_esp() { check_esp_image(&d, a.board) } else { check_uf2(&d, a.board) }
                 .unwrap_or_else(|e| panic!("{}: {e}", a.name));
         }
+    }
+
+    /// The unofficial Pico FIDO + OpenPGP release: an ESP32-S3 app image for the app slot.
+    #[test]
+    #[ignore]
+    fn unofficial_combo_image() {
+        let rel = releases("combo").unwrap();
+        let a = rel[0].assets.iter().find(|a| a.board == Board::Esp32S3).expect("ESP32-S3 asset");
+        let d = download(&a.url, &mut |_| {}).unwrap();
+        assert_eq!(esp_app_only(&d, Board::Esp32S3), Ok(true), "{}", a.name);
+        assert!(download("https://github.com/someone/else/releases/download/v1/x.bin", &mut |_| {}).is_err());
     }
 }

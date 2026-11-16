@@ -14,7 +14,18 @@ use crate::ui::progress::Progress;
 use crate::ui::skeleton::Skeleton;
 use crate::ui::spinner::Spinner;
 
-const PRODUCTS: [(&str, &str); 3] = [("fido", "Pico FIDO"), ("hsm", "Pico HSM"), ("openpgp", "Pico OpenPGP")];
+const PRODUCTS: [(&str, &str); 4] =
+    [("fido", "Pico FIDO"), ("hsm", "Pico HSM"), ("openpgp", "Pico OpenPGP"), ("combo", "Pico FIDO + OpenPGP (unofficial)")];
+
+/// GitHub repo per product (the backend only downloads from these).
+fn repo(product: &str) -> &'static str {
+    match product {
+        "combo" => "juniorsaldanha/pico-fido-openpgp",
+        "hsm" => "polhenarejos/pico-hsm",
+        "openpgp" => "polhenarejos/pico-openpgp",
+        _ => "polhenarejos/pico-fido",
+    }
+}
 const BOARDS: [Board; 4] = [Board::Esp32S3, Board::Esp32S2, Board::Rp2350, Board::Rp2040];
 
 /// "v7.6" / "8.0" -> (7, 6)
@@ -69,10 +80,11 @@ pub fn FirmwarePage() -> Element {
 
     let product_name = PRODUCTS.iter().find(|(p, _)| *p == product()).map(|(_, n)| *n).unwrap_or("");
     let cur_ver = cur_product.as_ref().and_then(|(_, v)| ver(v));
-    let switching = cur_product.as_ref().is_some_and(|(p, _)| p != product_name);
+    // The combined build reports itself as Pico FIDO and keeps FIDO's data, so FIDO <-> combo isn't a switch.
+    let switching = cur_product.as_ref().is_some_and(|(p, _)| p != product_name && !(product() == "combo" && p == "Pico FIDO"));
 
     rsx! {
-        PageHeader { title: "Firmware", subtitle: "Install official pico-keys releases from GitHub." }
+        PageHeader { title: "Firmware", subtitle: "Install pico-keys releases from GitHub, or the unofficial FIDO + OpenPGP build." }
 
         Card { class: "mb-6",
             CardContent { class: "flex flex-wrap items-end gap-6",
@@ -109,6 +121,18 @@ pub fn FirmwarePage() -> Element {
                         div { class: "text-muted-foreground", "On the key now" }
                         div { class: "font-medium", "{p} {v}" }
                     }
+                }
+            }
+        }
+
+        if product() == "combo" {
+            Alert { class: "mb-6", variant: AlertVariant::Warning,
+                TriangleAlert {}
+                AlertTitle { "Unofficial firmware" }
+                AlertDescription {
+                    "Pico FIDO and Pico OpenPGP (with PIV) combined in one firmware, with fixes to their SDK. It's built by this app's author, not by pico-keys: "
+                    "don't report its problems upstream. ESP32-S3 only. It replaces only the app slot, so the key's passkeys and settings stay; "
+                    "the OpenPGP card starts empty. Take a flash backup before installing it."
                 }
             }
         }
@@ -157,7 +181,7 @@ pub fn FirmwarePage() -> Element {
                                     }
                                     a {
                                         class: "text-muted-foreground hover:text-foreground",
-                                        href: "https://github.com/polhenarejos/pico-{product()}/releases/tag/{rel.tag}",
+                                        href: "https://github.com/{repo(&product())}/releases/tag/{rel.tag}",
                                         target: "_blank",
                                         title: "Release notes",
                                         ExternalLink { class: "size-4" }
