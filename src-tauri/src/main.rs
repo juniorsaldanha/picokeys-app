@@ -511,7 +511,7 @@ async fn ssh_keys() -> Result<Vec<SshKey>, String> {
 
 #[tauri::command]
 async fn ssh_generate(key: NewSshKey) -> Result<SshKey, String> {
-    let detail = String::new();
+    let detail = format!("{} {}", if key.ed25519 { "ed25519-sk" } else { "ecdsa-sk" }, key.file);
     audit::log("ssh_generate", &detail, async move {
         blocking(move || ssh::generate(&key)).await
     }

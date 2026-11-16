@@ -275,6 +275,9 @@ pub(crate) fn friendly(out: &str) -> String {
         "Security key not found. Is it plugged in?".into()
     } else if l.contains("unsupported") || l.contains("not supported") || l.contains("invalid format") && l.contains("ed25519") {
         "Your security key doesn't support this key type. Choose ECDSA P-256 (ecdsa-sk).".into()
+    } else if l.contains("invalid format") {
+        // OpenSSH's catch-all for authenticator errors; in practice PIN_AUTH_BLOCKED (3 wrong PINs in a row).
+        "The key refused. After 3 wrong PINs in a row it blocks PIN entry until it's unplugged: unplug it, plug it back in and try again with the correct PIN (the PIN page shows the attempts left).".into()
     } else if l.contains("no fido securitykeyprovider") {
         "This OpenSSH can't use security keys.".into()
     } else {
@@ -287,6 +290,7 @@ mod friendly_tests {
     #[test]
     fn unsupported_type() {
         assert!(super::friendly("Key enrollment failed: requested feature not supported").contains("ECDSA"));
+        assert!(super::friendly("Key enrollment failed: invalid format").contains("unplug"));
     }
 }
 
