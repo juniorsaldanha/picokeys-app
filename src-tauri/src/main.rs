@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod fido;
+mod migrate;
 mod firmware;
 mod oath;
 mod otp;
@@ -9,7 +10,7 @@ mod pico;
 mod ssh;
 
 use std::sync::Mutex;
-use types::{Board, GitSetup, GitSigning, NewSshKey, SshEnv, SshKey, Device, FlashProgress, FwRelease, FidoInfo, NewOath, NewOtp, OathAccount, OtpSlot, Passkey, Phy, PicoInfo};
+use types::{Board, LegacyKey, GitSetup, GitSigning, NewSshKey, SshEnv, SshKey, Device, FlashProgress, FwRelease, FidoInfo, NewOath, NewOtp, OathAccount, OtpSlot, Passkey, Phy, PicoInfo};
 
 /// One device conversation at a time: Pico firmware wedges if HID (CTAP) and
 /// CCID (rescue) requests overlap.
@@ -176,13 +177,39 @@ async fn ssh_test(host: String, key: String, pin: Option<String>) -> Result<Stri
     blocking(move || ssh::test(&host, &key, pin.as_deref())).await
 }
 
+#[tauri::command]
+async fn ssh_inventory() -> Result<Vec<LegacyKey>, String> {
+    tauri::async_runtime::spawn_blocking(migrate::inventory).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn ssh_authorize(host: String, key: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || migrate::authorize(&host, &key)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn ssh_check(host: String, key: String, pin: Option<String>) -> Result<String, String> {
+    blocking(move || migrate::check(&host, &key, pin.as_deref())).await
+}
+
+#[tauri::command]
+async fn ssh_switch_config(old: String, key: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || migrate::switch_config(&old, &key)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn ssh_archive(old: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || migrate::archive(&old)).await.map_err(|e| e.to_string())?
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             list_devices, fido_info, set_pin, change_pin, list_passkeys, delete_passkey, wink,
             pico_info, write_phy, fido_reset, oath_list, oath_calculate, oath_add, oath_delete,
             otp_status, otp_configure, otp_delete, otp_swap, random_hex, fw_releases, fw_flash,
-            ssh_env, ssh_install_openssh, ssh_keys, ssh_generate, ssh_recover, ssh_git_setup, ssh_add_host, ssh_test
+            ssh_env, ssh_install_openssh, ssh_keys, ssh_generate, ssh_recover, ssh_git_setup, ssh_add_host, ssh_test,
+            ssh_inventory, ssh_authorize, ssh_check, ssh_switch_config, ssh_archive
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

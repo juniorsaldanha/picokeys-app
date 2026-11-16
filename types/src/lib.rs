@@ -426,3 +426,20 @@ pub struct GitSetup {
     /// Also make git's SSH transport use this OpenSSH (macOS + Homebrew).
     pub use_for_transport: bool,
 }
+
+/// A regular (non-security-key) SSH key that could be replaced by a Pico key.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct LegacyKey {
+    /// Private key path (may not exist when the key lives in an agent like 1Password).
+    pub private_path: String,
+    pub pub_path: Option<String>,
+    /// `ssh-rsa`, `ssh-ed25519`, ...
+    pub kind: String,
+    pub comment: String,
+    /// Private key file is on disk (false: only the .pub, e.g. 1Password).
+    pub on_disk: bool,
+    /// `Host` patterns in ssh config that use this key.
+    pub hosts: Vec<String>,
+    /// Hosts known not to accept security-key SSH keys.
+    pub unsupported: Vec<String>,
+}

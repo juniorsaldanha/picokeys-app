@@ -40,6 +40,9 @@ pub fn SshPage() -> Element {
                 }
                 Hosts { keys: k.clone() }
             }
+            if e.keygen.is_some() {
+                crate::migrate::MigrateCard { pico_keys: k.clone(), on_change: move |_| keys.restart() }
+            }
         },
         (Some(Err(e)), _) | (_, Some(Err(e))) => rsx! { ErrorBox { title: "Couldn't inspect SSH", msg: humanize(e) } },
         _ => rsx! { Skeleton { class: "h-40 rounded-xl" } },

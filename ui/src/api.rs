@@ -240,3 +240,25 @@ struct PinArgs<'a> {
 pub async fn ssh_recover(pin: Option<&str>) -> Result<Vec<types::SshKey>, String> {
     call("ssh_recover", PinArgs { pin }).await
 }
+
+pub async fn ssh_inventory() -> Result<Vec<types::LegacyKey>, String> {
+    call("ssh_inventory", NONE).await
+}
+pub async fn ssh_authorize(host: &str, key: &str) -> Result<String, String> {
+    call("ssh_authorize", HostArgs { host, key, pin: None }).await
+}
+pub async fn ssh_check(host: &str, key: &str, pin: Option<&str>) -> Result<String, String> {
+    call("ssh_check", HostArgs { host, key, pin }).await
+}
+#[derive(Serialize)]
+struct OldArgs<'a> {
+    old: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key: Option<&'a str>,
+}
+pub async fn ssh_switch_config(old: &str, key: &str) -> Result<Vec<String>, String> {
+    call("ssh_switch_config", OldArgs { old, key: Some(key) }).await
+}
+pub async fn ssh_archive(old: &str) -> Result<String, String> {
+    call("ssh_archive", OldArgs { old, key: None }).await
+}

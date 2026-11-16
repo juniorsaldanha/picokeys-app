@@ -1,6 +1,7 @@
 mod api;
 mod device;
 mod firmware;
+mod migrate;
 mod oath;
 mod otp;
 mod pages;

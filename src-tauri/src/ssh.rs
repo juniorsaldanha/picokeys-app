@@ -9,13 +9,13 @@ use types::{GitSetup, GitSigning, NewSshKey, SshEnv, SshKey};
 
 type R<T> = Result<T, String>;
 
-const EXE: &str = if cfg!(windows) { ".exe" } else { "" };
+pub(crate) const EXE: &str = if cfg!(windows) { ".exe" } else { "" };
 
-fn home() -> R<PathBuf> {
+pub(crate) fn home() -> R<PathBuf> {
     std::env::home_dir().ok_or_else(|| "Can't find your home folder.".into())
 }
 
-fn ssh_dir() -> R<PathBuf> {
+pub(crate) fn ssh_dir() -> R<PathBuf> {
     Ok(home()?.join(".ssh"))
 }
 
@@ -88,7 +88,7 @@ fn signing(git: &Path) -> GitSigning {
 }
 
 /// The first ssh-keygen that can use security keys, else the first one found (with its problem).
-fn keygen() -> (Option<PathBuf>, Option<String>) {
+pub(crate) fn keygen() -> (Option<PathBuf>, Option<String>) {
     let all = find("ssh-keygen");
     if let Some(ok) = all.iter().find(|k| fido_problem(k).is_none()) {
         return (Some(ok.clone()), None);
@@ -207,7 +207,7 @@ pub fn keys() -> R<Vec<SshKey>> {
 
 /// Runs an OpenSSH tool non-interactively. A PIN, if needed, is handed over through a
 /// throwaway SSH_ASKPASS helper that echoes it from the environment (never on the command line).
-fn run_openssh(tool: &Path, args: &[String], pin: Option<&str>, timeout: Duration) -> R<(bool, String)> {
+pub(crate) fn run_openssh(tool: &Path, args: &[String], pin: Option<&str>, timeout: Duration) -> R<(bool, String)> {
     run_openssh_in(tool, args, pin, timeout, None)
 }
 
@@ -265,7 +265,7 @@ fn run_openssh_in(tool: &Path, args: &[String], pin: Option<&str>, timeout: Dura
     result
 }
 
-fn friendly(out: &str) -> String {
+pub(crate) fn friendly(out: &str) -> String {
     let l = out.to_lowercase();
     if l.contains("incorrect pin") || l.contains("pin invalid") || l.contains("pin_invalid") {
         "Wrong PIN.".into()
