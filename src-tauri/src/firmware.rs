@@ -658,6 +658,17 @@ mod tests {
         }
     }
 
+    /// Real key (writes the app slot): what the Install button runs for the latest unofficial release.
+    /// `cargo test -p picokeys-app -- --ignored live_install_combo --nocapture`
+    #[test]
+    #[ignore]
+    fn live_install_combo() {
+        let rel = releases("combo").unwrap();
+        let a = rel[0].assets.iter().find(|a| a.board == Board::Esp32S3).unwrap();
+        println!("installing {} {}", rel[0].tag, a.name);
+        flash(&a.url, Board::Esp32S3, &mut |p| if p.done == 0 || p.done == p.total { println!("{} {}/{}", p.stage, p.done, p.total) }).unwrap();
+    }
+
     #[test]
     fn backup_names() {
         assert_eq!(utc_stamp(0), "19700101-000000");
