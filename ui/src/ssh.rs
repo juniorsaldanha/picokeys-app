@@ -3,7 +3,7 @@ use crate::api;
 use crate::pages::{ErrorBox, PageHeader, humanize};
 use crate::AppState;
 use dioxus::prelude::*;
-use icons::{Check, Copy, ExternalLink, Fingerprint, GitCommitHorizontal, KeyRound, Plug, Plus, RefreshCw, Server, TriangleAlert};
+use icons::{Check, Copy, Download, ExternalLink, Fingerprint, GitCommitHorizontal, KeyRound, Plug, Plus, RefreshCw, Server, TriangleAlert};
 use types::{GitSetup, GitSigning, NewSshKey, SshEnv, SshKey};
 
 use crate::ui::alert::{Alert, AlertDescription, AlertTitle, AlertVariant};
@@ -27,7 +27,7 @@ pub fn SshPage() -> Element {
 
     let body = match (&*env.read(), &*keys.read()) {
         (Some(Ok(e)), Some(Ok(k))) => rsx! {
-            Tooling { env: e.clone() }
+            Tooling { env: e.clone(), on_change: move |_| { env.restart(); keys.restart(); } }
             Keys { env: e.clone(), keys: k.clone(), on_change: move |_| keys.restart() }
             if !k.is_empty() {
                 GitSigningCard {
@@ -74,29 +74,48 @@ fn CopyButton(text: String, #[props(default = "Copy")] label: &'static str) -> E
 }
 
 #[component]
-fn Tooling(env: SshEnv) -> Element {
+fn Tooling(env: SshEnv, on_change: EventHandler<()>) -> Element {
+    let mut busy = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
     let Some(problem) = env.problem.clone() else {
         return rsx! {
             p { class: "-mt-2 text-xs text-muted-foreground", "Using {env.version} ({env.keygen.clone().unwrap_or_default()})" }
         };
     };
-    let fix = if env.brew { "brew install openssh" } else { "" };
+    let install = move |_| async move {
+        busy.set(true);
+        error.set(None);
+        match api::ssh_install_openssh().await {
+            Ok(_) => on_change.call(()),
+            Err(e) => error.set(Some(e)),
+        }
+        busy.set(false);
+    };
     rsx! {
         Alert { variant: AlertVariant::Warning,
             TriangleAlert {}
             AlertTitle { "{problem}" }
             AlertDescription {
                 div { class: "flex flex-col gap-2",
-                    if env.brew {
-                        span { "Run this in Terminal, then click Refresh. Your existing keys and settings aren't affected." }
-                        div { class: "flex items-center gap-2",
-                            code { class: "rounded bg-muted px-2 py-1 font-mono text-xs", "{fix}" }
-                            CopyButton { text: fix.to_string() }
+                    if env.os == "macos" && env.brew {
+                        span { "Install OpenSSH from Homebrew. Apple's own ssh, your keys and your settings aren't changed." }
+                        div { class: "flex flex-wrap items-center gap-2",
+                            Button { size: ButtonSize::Sm, disabled: busy(), onclick: install,
+                                if busy() { Spinner {} } else { Download {} }
+                                if busy() { "Installing… (can take a few minutes)" } else { "Install OpenSSH" }
+                            }
+                            span { class: "text-xs text-muted-foreground", "Runs: brew install openssh" }
+                        }
+                        if let Some(e) = error() { pre { class: "selectable whitespace-pre-wrap text-xs text-destructive", "{e}" } }
+                    } else if env.os == "macos" {
+                        span { "Homebrew is needed first. Install it from brew.sh, then come back and click Refresh; the app can install OpenSSH for you after that." }
+                        a { href: "https://brew.sh", target: "_blank",
+                            Button { variant: ButtonVariant::Outline, size: ButtonSize::Sm, ExternalLink {} "Open brew.sh" }
                         }
                     } else if env.os == "windows" {
-                        span { "Install the OpenSSH Client (Settings → Optional features) or Git for Windows, then click Refresh." }
+                        span { "Install the OpenSSH Client (Settings → System → Optional features) or Git for Windows, then click Refresh." }
                     } else {
-                        span { "Install Homebrew from brew.sh, then run “brew install openssh” and click Refresh." }
+                        span { "Install OpenSSH 8.2 or newer with your package manager (for example openssh-client), then click Refresh." }
                     }
                 }
             }

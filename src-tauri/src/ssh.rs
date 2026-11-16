@@ -115,6 +115,31 @@ pub fn env() -> R<SshEnv> {
     })
 }
 
+/// macOS: `brew install openssh`. Returns brew's output tail.
+pub fn install_openssh() -> R<String> {
+    let brew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+        .iter()
+        .map(Path::new)
+        .find(|p| p.is_file())
+        .ok_or("Homebrew isn't installed. Install it from brew.sh first.")?;
+    let bin = brew.parent().unwrap_or(Path::new("/"));
+    // GUI apps get a bare PATH; brew's scripts need its own bin dir and the system tools.
+    let path = format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", bin.display());
+    let o = Command::new(brew)
+        .args(["install", "openssh"])
+        .env("PATH", path)
+        .env("NONINTERACTIVE", "1")
+        .env("HOMEBREW_NO_ENV_HINTS", "1")
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("Couldn't run Homebrew: {e}"))?;
+    let mut text = String::from_utf8_lossy(&o.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&o.stderr));
+    let tail: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    let tail = tail[tail.len().saturating_sub(6)..].join("\n");
+    if o.status.success() { Ok(tail) } else { Err(format!("brew install openssh failed:\n{tail}")) }
+}
+
 // ---------- public key files ----------
 
 fn take_string<'a>(b: &mut &'a [u8]) -> Option<&'a [u8]> {

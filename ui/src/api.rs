@@ -229,3 +229,6 @@ pub async fn ssh_add_host(host: &str, key: &str) -> Result<String, String> {
 pub async fn ssh_test(host: &str, key: &str, pin: Option<&str>) -> Result<String, String> {
     call("ssh_test", HostArgs { host, key, pin }).await
 }
+pub async fn ssh_install_openssh() -> Result<String, String> {
+    call("ssh_install_openssh", NONE).await
+}
