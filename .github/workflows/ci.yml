@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            libudev-dev libpcsclite-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # tauri::generate_context! checks frontendDist exists; the real UI is built in release.yml
+      - run: mkdir -p dist/public
+        shell: bash
+
+      - name: Clippy (backend + types)
+        run: cargo clippy -p picokeys-app -p types --all-targets -- -D warnings
+
+      - name: Clippy (UI, wasm)
+        run: cargo clippy -p ui --target wasm32-unknown-unknown -- -D warnings
+
+      - name: Tests (no hardware)
+        run: cargo test -p picokeys-app -p types
