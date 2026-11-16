@@ -300,3 +300,29 @@ struct BlobDel<'a> {
 pub async fn large_blob_delete(path: &str, pin: &str, index: u32) -> Result<(), String> {
     call("large_blob_delete", BlobDel { path, pin, index }).await
 }
+
+#[derive(Serialize)]
+struct PwArgs<'a> {
+    password: Option<&'a str>,
+}
+pub async fn oath_unlock(password: &str) -> Result<(), String> {
+    call("oath_unlock", PwArgs { password: Some(password) }).await
+}
+pub async fn oath_lock() -> Result<(), String> {
+    call("oath_lock", NONE).await
+}
+pub async fn oath_protected() -> Result<bool, String> {
+    call("oath_protected", NONE).await
+}
+/// None removes the password.
+pub async fn oath_set_password(password: Option<&str>) -> Result<(), String> {
+    call("oath_set_password", PwArgs { password }).await
+}
+#[derive(Serialize)]
+struct RenameArgs<'a> {
+    old: &'a str,
+    new: &'a str,
+}
+pub async fn oath_rename(old: &str, new: &str) -> Result<(), String> {
+    call("oath_rename", RenameArgs { old, new }).await
+}

@@ -1,6 +1,7 @@
 //! OATH (TOTP/HOTP) over CCID using the YKOATH protocol, as implemented by
 //! pico-fido `src/fido/oath.c`.
 use crate::pico::Card;
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use types::{NewOath, OathAccount, OathAlg};
 
@@ -20,6 +21,10 @@ const TAG_TOUCH: u8 = 0x7C;
 
 const INS_PUT: u8 = 0x01;
 const INS_DELETE: u8 = 0x02;
+const INS_SET_CODE: u8 = 0x03;
+const INS_RENAME: u8 = 0x05;
+const INS_VALIDATE: u8 = 0xA3;
+const TAG_RESPONSE: u8 = 0x75;
 const INS_LIST: u8 = 0xA1;
 const INS_CALCULATE: u8 = 0xA2;
 const INS_CALC_ALL: u8 = 0xA4;
@@ -28,14 +33,113 @@ const INS_SEND_REMAINING: u8 = 0xA5;
 const TYPE_HOTP: u8 = 0x10;
 const PROP_TOUCH: u8 = 0x02;
 
+/// Access key derived from the OATH password, kept in memory after unlock (never the password).
+static KEY: Mutex<Option<Vec<u8>>> = Mutex::new(None);
+
+/// YKOATH: PBKDF2-HMAC-SHA1(password, device id, 1000 rounds, 16 bytes).
+fn derive(password: &str, salt: &[u8]) -> Vec<u8> {
+    let mut k = vec![0u8; 16];
+    ring::pbkdf2::derive(ring::pbkdf2::PBKDF2_HMAC_SHA1, std::num::NonZeroU32::new(1000).unwrap(), salt, password.as_bytes(), &mut k);
+    k
+}
+
+fn hmac1(key: &[u8], msg: &[u8]) -> Vec<u8> {
+    ring::hmac::sign(&ring::hmac::Key::new(ring::hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, key), msg).as_ref().to_vec()
+}
+
+fn validate(card: &Card, key: &[u8], challenge: &[u8]) -> R<()> {
+    let mut mine = [0u8; 8];
+    getrandom::fill(&mut mine).map_err(|e| e.to_string())?;
+    let mut data = vec![];
+    tlv(&mut data, TAG_RESPONSE, &hmac1(key, challenge));
+    tlv(&mut data, TAG_CHALLENGE, &mine);
+    let rsp = card.apdu(&apdu(INS_VALIDATE, 0, &data)).map_err(|_| "Wrong password.".to_string())?;
+    // The key proves it knows the password too.
+    match tlvs(&rsp).find(|(t, _)| *t == TAG_RESPONSE) {
+        Some((_, r)) if r == hmac1(key, &mine) => Ok(()),
+        Some(_) => Err("The key's reply didn't verify.".into()),
+        None => Ok(()),
+    }
+}
+
+/// SELECT, then VALIDATE with the remembered key if the applet is password-protected.
 fn open() -> R<Card> {
     let card = Card::open()?;
     let sel = card.select_aid(&AID)?;
-    if tlvs(&sel).any(|(t, _)| t == TAG_CHALLENGE) {
-        // ponytail: password-protected OATH (SET CODE / VALIDATE) not supported yet
-        return Err("OATH is protected by a password, which this app can't unlock yet.".into());
+    if let Some((_, chal)) = tlvs(&sel).find(|(t, _)| *t == TAG_CHALLENGE) {
+        let key = KEY.lock().unwrap_or_else(|p| p.into_inner()).clone().ok_or("OATH_LOCKED")?;
+        if let Err(e) = validate(&card, &key, chal) {
+            *KEY.lock().unwrap_or_else(|p| p.into_inner()) = None;
+            return Err(if e == "Wrong password." { "OATH_LOCKED".into() } else { e });
+        }
     }
     Ok(card)
+}
+
+fn device_id(sel: &[u8]) -> R<Vec<u8>> {
+    tlvs(sel).find(|(t, _)| *t == TAG_NAME).map(|(_, v)| v.to_vec()).ok_or_else(|| "The key didn't report an OATH device id.".into())
+}
+
+/// Checks the password and remembers the derived key for this app session.
+pub fn unlock(password: &str) -> R<()> {
+    let card = Card::open()?;
+    let sel = card.select_aid(&AID)?;
+    let Some((_, chal)) = tlvs(&sel).find(|(t, _)| *t == TAG_CHALLENGE) else { return Ok(()) };
+    let key = derive(password, &device_id(&sel)?);
+    validate(&card, &key, chal)?;
+    *KEY.lock().unwrap_or_else(|p| p.into_inner()) = Some(key);
+    Ok(())
+}
+
+pub fn lock() {
+    *KEY.lock().unwrap_or_else(|p| p.into_inner()) = None;
+}
+
+/// Whether the applet has a password (true) — independent of whether we're unlocked.
+pub fn protected() -> R<bool> {
+    let card = Card::open()?;
+    Ok(tlvs(&card.select_aid(&AID)?).any(|(t, _)| t == TAG_CHALLENGE))
+}
+
+/// Set, change (`Some`) or remove (`None`) the OATH password. Needs a prior unlock if one is set.
+pub fn set_password(new: Option<&str>) -> R<()> {
+    let card = open()?;
+    let sel = card.select_aid(&AID)?;
+    // re-SELECT reset validation; validate again on this fresh session
+    if let Some((_, chal)) = tlvs(&sel).find(|(t, _)| *t == TAG_CHALLENGE) {
+        let key = KEY.lock().unwrap_or_else(|p| p.into_inner()).clone().ok_or("OATH_LOCKED")?;
+        validate(&card, &key, chal)?;
+    }
+    match new.filter(|p| !p.is_empty()) {
+        None => {
+            card.apdu(&[0x00, INS_SET_CODE, 0x00, 0x00])?;
+            lock();
+        }
+        Some(pw) => {
+            let key = derive(pw, &device_id(&sel)?);
+            let mut chal = [0u8; 8];
+            getrandom::fill(&mut chal).map_err(|e| e.to_string())?;
+            let mut k = vec![0x21]; // TOTP | HMAC-SHA1
+            k.extend_from_slice(&key);
+            let mut data = vec![];
+            tlv(&mut data, TAG_KEY, &k);
+            tlv(&mut data, TAG_CHALLENGE, &chal);
+            tlv(&mut data, TAG_RESPONSE, &hmac1(&key, &chal));
+            card.apdu(&apdu(INS_SET_CODE, 0, &data))?;
+            *KEY.lock().unwrap_or_else(|p| p.into_inner()) = Some(key);
+        }
+    }
+    Ok(())
+}
+
+pub fn rename(old: &str, new: &str) -> R<()> {
+    if new.is_empty() || new.len() > 64 {
+        return Err("Name must be 1–64 bytes.".into());
+    }
+    let mut data = vec![];
+    tlv(&mut data, TAG_NAME, old.as_bytes());
+    tlv(&mut data, TAG_NAME, new.as_bytes());
+    open()?.apdu(&apdu(INS_RENAME, 0, &data)).map(|_| ())
 }
 
 pub(crate) fn tlvs(d: &[u8]) -> impl Iterator<Item = (u8, &[u8])> {
@@ -225,6 +329,10 @@ mod tests {
         let mut it = tlvs(&[0x71, 2, b'a', b'b', 0x76, 1]);
         assert_eq!(it.next(), Some((0x71, &b"ab"[..])));
         assert_eq!(it.next(), None); // truncated TLV stops cleanly
+        // openssl kdf -keylen 16 -kdfopt digest:SHA1 -kdfopt pass:password -kdfopt salt:salt -kdfopt iter:1000 PBKDF2
+        assert_eq!(crate::fido::hex(&derive("password", b"salt")), "6e88be8bad7eae9d9e10aa061224034f");
+        // RFC 2202 HMAC-SHA1 test case 2
+        assert_eq!(crate::fido::hex(&hmac1(b"Jefe", b"what do ya want for nothing?")), "effcdf6ae5eb2fa2d27416d5f184df9c259a7c79");
     }
 
     /// Adds, reads and deletes a throwaway account on the connected key.

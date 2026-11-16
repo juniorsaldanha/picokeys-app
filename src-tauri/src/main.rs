@@ -151,6 +151,31 @@ async fn oath_add(account: NewOath) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn oath_unlock(password: String) -> Result<(), String> {
+    blocking(move || oath::unlock(&password)).await
+}
+
+#[tauri::command]
+async fn oath_lock() {
+    oath::lock()
+}
+
+#[tauri::command]
+async fn oath_protected() -> Result<bool, String> {
+    blocking(oath::protected).await
+}
+
+#[tauri::command]
+async fn oath_set_password(password: Option<String>) -> Result<(), String> {
+    blocking(move || oath::set_password(password.as_deref())).await
+}
+
+#[tauri::command]
+async fn oath_rename(old: String, new: String) -> Result<(), String> {
+    blocking(move || oath::rename(&old, &new)).await
+}
+
+#[tauri::command]
 async fn oath_delete(name: String) -> Result<(), String> {
     blocking(move || oath::delete(&name)).await
 }
@@ -270,6 +295,7 @@ fn main() {
             save_text,
             large_blobs,
             large_blob_delete, oath_list, oath_calculate, oath_add, oath_delete,
+            oath_unlock, oath_lock, oath_protected, oath_set_password, oath_rename,
             otp_status, otp_configure, otp_delete, otp_swap, random_hex, fw_releases, fw_flash,
             ssh_env, ssh_install_openssh, ssh_keys, ssh_generate, ssh_recover, ssh_git_setup, ssh_add_host, ssh_test,
             ssh_inventory, ssh_authorize, ssh_check, ssh_switch_config, ssh_archive
