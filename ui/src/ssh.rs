@@ -289,7 +289,9 @@ fn NewKeyForm(on_done: EventHandler<bool>) -> Element {
                             }
                         },
                         option { value: "ecdsa", selected: !ed25519(), "ECDSA P-256 (ecdsa-sk)" }
-                        option { value: "ed", selected: ed25519(), "Ed25519 (ed25519-sk)" }
+                        option { value: "ed", selected: ed25519(), disabled: !eddsa,
+                            if eddsa { "Ed25519 (ed25519-sk)" } else { "Ed25519 (ed25519-sk): not supported by this key" }
+                        }
                     }
                 }
                 div { class: "flex flex-col gap-1.5",

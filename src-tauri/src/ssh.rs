@@ -273,12 +273,20 @@ pub(crate) fn friendly(out: &str) -> String {
         "The key needs its PIN for this.".into()
     } else if l.contains("device not found") || l.contains("no device") {
         "Security key not found. Is it plugged in?".into()
-    } else if l.contains("unsupported") || l.contains("invalid format") && l.contains("ed25519") {
-        "The key doesn't support this key type; try ECDSA.".into()
+    } else if l.contains("unsupported") || l.contains("not supported") || l.contains("invalid format") && l.contains("ed25519") {
+        "Your security key doesn't support this key type. Choose ECDSA P-256 (ecdsa-sk).".into()
     } else if l.contains("no fido securitykeyprovider") {
         "This OpenSSH can't use security keys.".into()
     } else {
         out.lines().rfind(|x| !x.trim().is_empty()).unwrap_or("ssh-keygen failed.").to_string()
+    }
+}
+
+#[cfg(test)]
+mod friendly_tests {
+    #[test]
+    fn unsupported_type() {
+        assert!(super::friendly("Key enrollment failed: requested feature not supported").contains("ECDSA"));
     }
 }
 
