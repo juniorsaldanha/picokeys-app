@@ -1,5 +1,11 @@
 # Pico FIDO + Pico OpenPGP in one firmware
 
+> **Not usable yet.** Both applets create files at runtime as `prefix << 8 | slot`, and their
+> prefixes overlap (0xD0–0xD3). On a real key, OpenPGP's first boot wrote PIV records into the
+> range FIDO walks when listing passkeys, which broke credential management. `merge_files.py`
+> now refuses to merge while the prefixes overlap. Making it usable needs OpenPGP's container
+> prefixes moved to bytes FIDO never uses, plus an upgrade test that lists passkeys.
+
 Upstream ships FIDO (with OATH/OTP) and OpenPGP (with PIV) as separate firmwares, so a key
 has either passkeys or an OpenPGP card. `make-combo.sh` builds one source tree with both, so the
 same key can hold passkeys and an `ssh-rsa` key on the OpenPGP card.
@@ -13,12 +19,12 @@ What it changes:
 
 - base: the pico-fido tree (and its pico-keys-sdk); the OpenPGP and PIV sources are added
 - one file table: FIDO's entries spliced into OpenPGP's (`merge_files.py`; fails on a duplicate
-  file id). Flash data is keyed by file id, so an existing FIDO key keeps its passkeys and PIN.
+  static file id, or on a runtime prefix both use). Flash data is keyed by file id.
   `EF_VAULT_KEY` is shared on purpose (the vault root has per-app slots).
 - one management applet (FIDO's); PIV's `cmd_version` renamed; product id stays Pico FIDO
 - CCID and libcvc on; the build number pinned to the pico-fido checkout's
 
-Checked against pico-fido 99337e1 + pico-openpgp 9b23276:
+What passed against pico-fido 99337e1 + pico-openpgp 9b23276 (and still missed the clash):
 
 - emulator: the app's OpenPGP/SSH live tests (`ci/emulator/run.sh`), including ssh logins
   through the built-in agent with RSA, P-256 and Ed25519

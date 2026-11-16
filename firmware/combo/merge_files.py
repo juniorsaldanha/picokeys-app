@@ -30,6 +30,23 @@ for r in rows:
     assert f not in pgp_ids, f"file id {f:#06x} used by both applets"
     added.append("    " + r.strip())
 
+
+
+# Files created at runtime are "prefix byte << 8 | slot"; static ids can't show those clashes.
+def prefixes(src_dir, files_h):
+    import glob
+    out = set()
+    for c in glob.glob(f"{src_dir}/*container*.c"):
+        out |= {int(x, 16) for x in re.findall(r"\b0x([0-9a-fA-F]{2})u\b", open(c).read())}
+    # ranges documented in files.h, e.g. "RPs at 0xD000 - 0xD0FF"
+    for a, b in re.findall(r"0x([0-9A-Fa-f]{2})00 - 0x([0-9A-Fa-f]{2})FF", open(files_h).read()):
+        out |= set(range(int(a, 16), int(b, 16) + 1))
+    return out
+
+
+shared = prefixes(fido_dir, f"{fido_dir}/files.h") & prefixes(pgp_dir, f"{pgp_dir}/files.h")
+assert not shared, "runtime file-id prefixes used by both applets: " + " ".join(f"{p:#04x}" for p in sorted(shared))
+
 marker = re.search(r"\n(\s*/\* \d+ \*/ \{ \.fid = 0x0000, \.parent = 0, \.name = openpgp_aid)", pgp)
 assert marker, "OpenPGP DF entry not found"
 out = pgp[: marker.start()] + "\n    // ---- Pico FIDO ----\n" + "\n".join(added) + pgp[marker.start():]
