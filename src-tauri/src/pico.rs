@@ -284,25 +284,6 @@ pub fn get_time() -> R<Option<u32>> {
     }
 }
 
-/// IRREVERSIBLE: burns the vendor boot-key digest into one-time fuses so only firmware signed by
-/// the pico-keys vendor boots. `lock` (secure lock) additionally revokes the other key slots and
-/// write-protects the key; firmware requires secure boot to be enabled first. Needs a touch.
-pub fn enable_secure_boot(bootkey: u8, lock: bool) -> R<()> {
-    let info = info()?;
-    if info.mcu.contains("RP2040") {
-        return Err("The RP2040 has no secure boot.".into());
-    }
-    match (&info.secure_boot, lock) {
-        (Some(sb), true) if !sb.enabled => return Err("Enable secure boot first, then secure lock.".into()),
-        (Some(sb), true) if sb.locked => return Err("Secure lock is already on.".into()),
-        (Some(sb), false) if sb.enabled => return Err("Secure boot is already enabled.".into()),
-        _ => {}
-    }
-    let card = Card::open()?;
-    card.select()?;
-    card.apdu(&[0x80, 0x1D, bootkey, lock as u8]).map(|_| ())
-}
-
 /// Restart an RP2040/RP2350 key into its BOOTSEL (UF2 drive) mode. Needs a touch.
 pub fn reboot_bootsel() -> R<()> {
     let card = Card::open()?;

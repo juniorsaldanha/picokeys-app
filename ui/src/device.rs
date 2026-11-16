@@ -51,55 +51,6 @@ fn Row(label: &'static str, children: Element) -> Element {
     }
 }
 
-/// Two-step, irreversible: secure boot, then secure lock. Typed confirmation for each.
-#[component]
-fn SecureBootPanel(enabled: bool) -> Element {
-    let mut open = use_signal(|| false);
-    let mut phrase = use_signal(String::new);
-    let mut busy = use_signal(|| false);
-    let mut result = use_signal(|| None::<Result<String, String>>);
-    let lock = enabled; // next step
-    let what = if lock { "secure lock" } else { "secure boot" };
-    let run = move |_| async move {
-        busy.set(true);
-        let r = api::pico_secure_boot(0, lock, &phrase.peek()).await;
-        result.set(Some(r.map(|_| "Done. Unplug and replug the key to see the new status.".into())));
-        phrase.set(String::new());
-        busy.set(false);
-    };
-    rsx! {
-        div { class: "mt-3 flex flex-col gap-2 rounded-lg border border-destructive/40 p-3 text-xs",
-            if !open() {
-                div { class: "flex items-center justify-between gap-2",
-                    span { class: "text-muted-foreground", if lock { "Next step: secure lock." } else { "Secure boot is off." } }
-                    Button { variant: ButtonVariant::Outline, size: ButtonSize::Sm, onclick: move |_| open.set(true), "Enable {what}…" }
-                }
-            } else {
-                p { class: "font-medium text-destructive", "This burns one-time fuses. It can never be undone." }
-                if lock {
-                    p { "Secure lock revokes every other boot key and write-protects the fuses. Together with secure boot it stops anyone reading or replacing the firmware, including you." }
-                } else {
-                    p { "After this the key only boots firmware signed by the pico-keys vendor (official releases). Flashing a self-built or unofficial image will leave it unbootable for good. Only continue if the key runs an official release — the one from the web flasher or the Firmware page." }
-                }
-                p { "Type ENABLE SECURE BOOT to continue, then touch the key when it blinks." }
-                Input { class: "font-mono", value: phrase(), oninput: move |e: FormEvent| phrase.set(e.value()) }
-                div { class: "flex justify-end gap-2",
-                    Button { variant: ButtonVariant::Ghost, size: ButtonSize::Sm, onclick: move |_| { open.set(false); phrase.set(String::new()); }, "Cancel" }
-                    Button { variant: ButtonVariant::Destructive, size: ButtonSize::Sm, disabled: busy() || phrase() != "ENABLE SECURE BOOT", onclick: run,
-                        if busy() { Spinner {} }
-                        "Burn fuses"
-                    }
-                }
-                match result() {
-                    Some(Ok(m)) => rsx! { p { class: "text-success", "{m}" } },
-                    Some(Err(e)) => rsx! { p { class: "text-destructive", "{e}" } },
-                    None => rsx! {},
-                }
-            }
-        }
-    }
-}
-
 /// The key's clock is only used for passkey expiry and is lost when unplugged.
 #[component]
 fn ClockRow() -> Element {
@@ -180,10 +131,8 @@ fn DeviceBody(info: PicoInfo) -> Element {
                         }
                         if sb.enabled { Row { label: "Boot key", "#{sb.bootkey}" } }
                     }
-                    if !info.mcu.contains("RP2040") {
-                        if let Some(sb) = info.secure_boot.clone() {
-                            if !sb.locked { SecureBootPanel { enabled: sb.enabled } }
-                        }
+                    p { class: "mt-3 rounded-lg bg-muted px-3 py-2.5 text-xs text-muted-foreground",
+                        "Enabling secure boot burns one-time fuses and can't be undone, so it is read-only here."
                     }
                 }
             }
