@@ -298,9 +298,9 @@ mod tests {
     }
 
 
-    /// switch_config + archive against a throwaway HOME (Include, .pub-style and private-style lines).
+    /// Migration (switch_config + archive) and SSH & Git setup against a throwaway HOME.
     #[test]
-    fn switch_and_archive() {
+    fn home_flows() {
         let h = std::env::temp_dir().join(format!("pkm-home-{}", std::process::id()));
         let ssh = h.join(".ssh");
         std::fs::create_dir_all(ssh.join("config.d")).unwrap();
@@ -333,6 +333,30 @@ mod tests {
 
         archive(&old).unwrap();
         assert!(!ssh.join("pve").exists() && ssh.join("retired/pve").exists() && ssh.join("retired/pve.pub").exists());
+
+        // SSH & Git page: Host block (once) and SSH commit signing, same throwaway HOME.
+        let ty = "sk-ssh-ed25519@openssh.com";
+        let s = |b: &[u8]| [&(b.len() as u32).to_be_bytes()[..], b].concat();
+        let ed = format!("{ty} {} pico\n", { use base64::Engine; base64::engine::general_purpose::STANDARD.encode([s(ty.as_bytes()), s(&[1; 32]), s(b"ssh:")].concat()) });
+        let ed_pub = ssh.join("id_ed25519_sk.pub");
+        std::fs::write(&ed_pub, &ed).unwrap();
+        let ed_pub = ed_pub.display().to_string();
+        let block = crate::ssh::add_host("github.com", &ed_pub).unwrap();
+        assert!(block.contains("IdentityFile ") && block.contains("id_ed25519_sk\n"), "{block}");
+        assert!(crate::ssh::add_host("github.com", &ed_pub).is_err(), "second block refused");
+
+        let gitcfg = h.join(".gitconfig");
+        std::fs::write(&gitcfg, "").unwrap();
+        // SAFETY: as above.
+        unsafe { std::env::set_var("GIT_CONFIG_GLOBAL", &gitcfg) };
+        let setup = types::GitSetup { key: ed_pub.clone(), email: "me@example.com".into(), sign_commits: true, sign_tags: false, use_for_transport: false };
+        crate::ssh::setup_git(&setup).unwrap();
+        crate::ssh::setup_git(&setup).unwrap(); // idempotent
+        let g = std::fs::read_to_string(&gitcfg).unwrap();
+        assert!(g.contains("format = ssh") && g.contains("signingkey = ") && g.contains("id_ed25519_sk.pub") /* git escapes Windows backslashes */ && g.contains("gpgsign = true"), "{g}");
+        let signers = std::fs::read_to_string(h.join(".config/git/allowed_signers")).unwrap();
+        assert_eq!(signers.lines().count(), 1, "{signers}");
+        assert!(signers.starts_with("me@example.com namespaces=\"git\" sk-ssh-ed25519@openssh.com "));
         let _ = std::fs::remove_dir_all(&h);
     }
 

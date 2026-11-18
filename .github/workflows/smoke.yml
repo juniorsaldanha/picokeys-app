@@ -1,0 +1,64 @@
+name: Installer smoke test
+
+# Installs the published packages on clean runners, starts the app, and keeps a screenshot.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag
+        required: true
+  release:
+    types: [published]
+
+env:
+  TAG: ${{ inputs.tag || github.event.release.tag_name }}
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p "*.deb"
+      - run: sudo apt-get update && sudo apt-get install -y ./*.deb xvfb imagemagick
+      - name: Udev rule installed
+        run: cat /usr/lib/udev/rules.d/70-pico-key.rules
+      - name: Start the app
+        run: |
+          bin=$(dpkg -L "$(dpkg-deb -f ./*.deb Package)" | grep "^/usr/bin/." | head -1)
+          echo "binary: $bin"
+          xvfb-run -a -s "-screen 0 1280x800x24" bash -c "
+            $bin > app.log 2>&1 & pid=\$!
+            sleep 20
+            import -window root linux.png
+            kill -0 \$pid || { echo 'app exited'; cat app.log; exit 1; }
+            kill \$pid"
+          cat app.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: linux, path: '*.png' }
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - run: gh release download $env:TAG -R $env:GITHUB_REPOSITORY -p "*.msi"
+      - name: Install
+        run: |
+          $msi = (Get-ChildItem *.msi).FullName
+          Start-Process msiexec -ArgumentList "/i `"$msi`" /qn /l*v install.log" -Wait
+          Get-Content install.log -Tail 5
+      - name: Start the app
+        run: |
+          $exe = Get-ChildItem "C:\Program Files\Pico Key Manager" -Filter *.exe -Recurse | Where-Object Name -notmatch uninstall | Select-Object -First 1
+          "binary: $($exe.FullName)"
+          $p = Start-Process $exe.FullName -PassThru
+          Start-Sleep 20
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $bmp.Save("$PWD\windows.png")
+          if ($p.HasExited) { "app exited with $($p.ExitCode)"; exit 1 }
+          Stop-Process $p
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: windows, path: '*.png' }
