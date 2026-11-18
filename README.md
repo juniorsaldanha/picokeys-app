@@ -24,6 +24,16 @@ Stack: **Tauri 2** (native shell, Rust backend) + **Dioxus 0.7** (Rust → WASM 
 - Firmware: install official Pico FIDO / HSM / OpenPGP releases from GitHub; ESP32-S2/S3 via the ROM bootloader (espflash), RP2040/RP2350 via the UF2 drive
 - SSH & Git: create ecdsa-sk/ed25519-sk keys (resident, verify-required, labels), set up git SSH commit/tag signing with allowed_signers, add ~/.ssh/config hosts, test logins
 
+## Install
+
+Installers are on the [releases page](https://github.com/juniorsaldanha/picokeys-app/releases).
+The builds aren't code-signed yet.
+
+- **macOS** (universal): `brew install --cask juniorsaldanha/tap/pico-key-manager`, or the
+  `.dmg` (first launch: System Settings → Privacy & Security → Open Anyway)
+- **Windows**: the `.msi` or `-setup.exe` (SmartScreen: More info → Run anyway)
+- **Linux**: the `.deb` or `.rpm` (they install the udev rule below), or the `.AppImage`
+
 ## Layout
 
 ```
@@ -49,7 +59,7 @@ cargo test -p picokeys-app -- --include-ignored --nocapture
 
 ### Linux
 
-HID access needs a udev rule, e.g. `/etc/udev/rules.d/70-pico-key.rules`:
+HID access needs a udev rule (the .deb/.rpm install it; for the AppImage or a source build, put this in `/etc/udev/rules.d/70-pico-key.rules`):
 
 ```
 KERNEL=="hidraw*", ATTRS{idVendor}=="2e8a", ATTRS{idProduct}=="10fe", TAG+="uaccess"
