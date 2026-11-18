@@ -44,7 +44,8 @@ pub fn export(src: &str, dest: &Path) -> R<()> {
     Ok(())
 }
 
-/// Owner-only access (0600 for files, 0700 for folders).
+/// Owner-only access (0600 for files, 0700 for folders). No-op on Windows, where the user profile is already private.
+#[cfg_attr(not(unix), allow(unused_variables))]
 pub fn private(p: &Path) {
     #[cfg(unix)]
     {
