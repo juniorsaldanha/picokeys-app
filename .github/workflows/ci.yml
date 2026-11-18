@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]  # 22.04's PipeWire is too old for xcap
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf \
+            libudev-dev libpcsclite-dev pkg-config \
+            libpipewire-0.3-dev libclang-dev libgbm-dev libdrm-dev libegl-dev libwayland-dev libxcb1-dev libxcb-randr0-dev  # xcap (screen QR scan)
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # tauri::generate_context! checks frontendDist exists; the real UI is built in release.yml
+      - run: mkdir -p dist/public
+        shell: bash
+
+      - name: Clippy (backend + types)
+        run: cargo clippy -p picokeys-app -p types --all-targets -- -D warnings
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # ui/assets/tailwind.css is generated (gitignored) and asset!() needs it to compile
+      - name: Build Tailwind CSS
+        working-directory: ui
+        run: |
+          npm ci
+          npx @tailwindcss/cli -i tailwind.css -o assets/tailwind.css
+
+      - name: Clippy (UI, wasm)
+        run: cargo clippy -p ui --target wasm32-unknown-unknown -- -D warnings
+
+      - name: Tests (no hardware)
+        run: cargo test -p picokeys-app -p types

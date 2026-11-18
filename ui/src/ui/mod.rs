@@ -11,3 +11,5 @@ pub mod separator;
 pub mod skeleton;
 pub mod spinner;
 pub mod theme_toggle;
+pub mod progress;
+pub mod switch;

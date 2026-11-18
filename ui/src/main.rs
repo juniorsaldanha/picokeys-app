@@ -1,9 +1,19 @@
+mod admin;
 mod api;
+mod device;
+mod firmware;
+mod hsm;
+mod migrate;
+mod oath;
+mod otp;
 mod pages;
+mod pgp;
+mod policy;
+mod ssh;
 mod ui;
 
 use dioxus::prelude::*;
-use icons::{KeyRound, LayoutDashboard, RectangleEllipsis, Usb};
+use icons::{Cpu, FileKey, UserCog, Vault, Terminal, HardDriveDownload, Hand, KeyRound, LayoutDashboard, RectangleEllipsis, ShieldCheck, Usb};
 use types::{Device, FidoInfo};
 use ui::spinner::Spinner;
 use ui::theme_toggle::ThemeToggle;
@@ -19,6 +29,14 @@ pub enum Page {
     Overview,
     Passkeys,
     Pin,
+    Device,
+    Oath,
+    Otp,
+    Firmware,
+    Ssh,
+    Pgp,
+    Hsm,
+    Admin,
 }
 
 /// App-wide state. Signals are `Copy`, so pages grab this via `use_context`.
@@ -41,8 +59,8 @@ fn App() -> Element {
     // Hot-plug: poll HID enumeration (cheap) and only touch state when it changes.
     use_future(move || async move {
         loop {
-            if let Ok(list) = api::list_devices().await {
-                if *devices.peek() != list {
+            if let Ok(list) = api::list_devices().await
+                && *devices.peek() != list {
                     let keep = device.peek().clone().filter(|d| list.contains(d));
                     if keep.is_none() {
                         pin.set(None);
@@ -50,7 +68,6 @@ fn App() -> Element {
                     device.set(keep.or_else(|| list.first().cloned()));
                     devices.set(list);
                 }
-            }
             scanned.set(true);
             api::sleep_ms(1200).await;
         }
@@ -65,6 +82,7 @@ fn App() -> Element {
 
     rsx! {
         document::Stylesheet { href: CSS }
+        admin::AdminPrompt {}
         div { class: "flex h-screen overflow-hidden bg-background text-foreground",
             Sidebar { devices, page }
             main { class: "flex-1 overflow-y-auto",
@@ -76,6 +94,14 @@ fn App() -> Element {
                             Page::Overview => rsx! { pages::Overview {} },
                             Page::Passkeys => rsx! { pages::Passkeys {} },
                             Page::Pin => rsx! { pages::PinPage {} },
+                            Page::Device => rsx! { device::DevicePage {} },
+                            Page::Oath => rsx! { oath::OathPage {} },
+                            Page::Otp => rsx! { otp::OtpPage {} },
+                            Page::Firmware => rsx! { firmware::FirmwarePage {} },
+                            Page::Pgp => rsx! { pgp::PgpPage {} },
+                            Page::Hsm => rsx! { hsm::HsmPage {} },
+                            Page::Admin => rsx! { admin::AdminPage {} },
+                            Page::Ssh => rsx! { ssh::SshPage {} },
                         }
                     }
                 }
@@ -147,6 +173,17 @@ fn Sidebar(devices: Signal<Vec<Device>>, page: Signal<Page>) -> Element {
                 NavItem { page, target: Page::Overview, label: "Overview", icon: rsx! { LayoutDashboard {} } }
                 NavItem { page, target: Page::Passkeys, label: "Passkeys", icon: rsx! { KeyRound {} } }
                 NavItem { page, target: Page::Pin, label: "PIN", icon: rsx! { RectangleEllipsis {} } }
+            }
+            div { class: "px-2 pb-1.5 pt-4 text-[11px] font-medium uppercase tracking-wider text-muted-foreground", "Pico" }
+            nav { class: "flex flex-col gap-0.5",
+                NavItem { page, target: Page::Oath, label: "Authenticator", icon: rsx! { ShieldCheck {} } }
+                NavItem { page, target: Page::Ssh, label: "SSH & Git", icon: rsx! { Terminal {} } }
+                NavItem { page, target: Page::Otp, label: "OTP slots", icon: rsx! { Hand {} } }
+                NavItem { page, target: Page::Pgp, label: "OpenPGP", icon: rsx! { FileKey {} } }
+                NavItem { page, target: Page::Hsm, label: "HSM", icon: rsx! { Vault {} } }
+                NavItem { page, target: Page::Device, label: "Device", icon: rsx! { Cpu {} } }
+                NavItem { page, target: Page::Firmware, label: "Firmware", icon: rsx! { HardDriveDownload {} } }
+                NavItem { page, target: Page::Admin, label: "Admin & audit", icon: rsx! { UserCog {} } }
             }
 
             div { class: "flex-1" }

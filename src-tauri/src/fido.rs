@@ -17,7 +17,7 @@ fn cfg() -> LibCfg {
     c
 }
 
-fn open(path: &str) -> R<FidoKeyHid> {
+pub(crate) fn open(path: &str) -> R<FidoKeyHid> {
     FidoKeyHid::new(&[HidParam::Path(path.into())], &cfg()).map_err(err)
 }
 
@@ -52,6 +52,8 @@ pub fn info(path: &str) -> R<FidoInfo> {
         min_pin_length: i.min_pin_length,
         remaining_passkeys: i.remaining_discoverable_credentials,
         max_msg_size: i.max_msg_size,
+        max_large_blob: i.max_serialized_large_blob_array,
+        max_cred_blob: i.max_cred_blob_length,
     })
 }
 
@@ -89,6 +91,10 @@ pub fn delete_passkey(path: &str, pin: &str, cred_id: &str) -> R<()> {
     open(path)?.credential_management_delete_credential(Some(pin), pkcd).map_err(err)
 }
 
+pub(crate) fn pin_err(e: &str) -> String {
+    e.to_string() // ui::pages::humanize maps the CTAP codes
+}
+
 pub fn wink(path: &str) -> R<()> {
     open(path)?.wink().map_err(err)
 }
@@ -111,12 +117,12 @@ fn alg_name(alg: &str) -> String {
     .into()
 }
 
-fn hex(b: &[u8]) -> String {
+pub(crate) fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-fn unhex(s: &str) -> R<Vec<u8>> {
-    if s.len() % 2 != 0 {
+pub(crate) fn unhex(s: &str) -> R<Vec<u8>> {
+    if !s.len().is_multiple_of(2) {
         return Err("invalid credential id".into());
     }
     (0..s.len())

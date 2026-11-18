@@ -1,0 +1,2 @@
+# Pico Key Manager: let the logged-in user talk to Pico keys (FIDO HID)
+KERNEL=="hidraw*", ATTRS{idVendor}=="2e8a", ATTRS{idProduct}=="10fe", TAG+="uaccess"
