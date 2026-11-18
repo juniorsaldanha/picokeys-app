@@ -32,6 +32,7 @@
       "deb": { "files": { "/usr/lib/udev/rules.d/70-pico-key.rules": "linux/70-pico-key.rules" } },
       "rpm": { "files": { "/usr/lib/udev/rules.d/70-pico-key.rules": "linux/70-pico-key.rules" } }
     },
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "macOS": { "signingIdentity": "-" }
   }
 }
