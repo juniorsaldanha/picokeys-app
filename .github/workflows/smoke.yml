@@ -7,11 +7,11 @@ on:
       tag:
         description: Release tag
         required: true
-  push:
-    branches: [chore/smoke-test-installers]
+  release:
+    types: [published]
 
 env:
-  TAG: ${{ inputs.tag || 'v0.1.0' }}
+  TAG: ${{ inputs.tag || github.event.release.tag_name }}
   GH_TOKEN: ${{ github.token }}
 
 jobs:
