@@ -86,8 +86,9 @@ fn App() -> Element {
         div { class: "flex h-screen overflow-hidden bg-background text-foreground",
             Sidebar { devices, page }
             main { class: "flex-1 overflow-y-auto",
-                if device().is_none() {
-                    NoDevice { scanning: !scanned() }
+                // Firmware works without a detected key: a blank or broken board is only in its bootloader.
+                if device().is_none() && page() != Page::Firmware {
+                    NoDevice { scanning: !scanned(), page }
                 } else {
                     div { class: "mx-auto max-w-5xl px-8 py-8 animate-in fade-in duration-300",
                         match page() {
@@ -214,7 +215,7 @@ fn NavItem(page: Signal<Page>, target: Page, label: &'static str, icon: Element)
 }
 
 #[component]
-fn NoDevice(scanning: bool) -> Element {
+fn NoDevice(scanning: bool, page: Signal<Page>) -> Element {
     rsx! {
         div { class: "flex h-full flex-col items-center justify-center gap-5 p-8 text-center animate-in fade-in duration-500",
             div { class: "relative",
@@ -232,6 +233,11 @@ fn NoDevice(scanning: bool) -> Element {
             div { class: "flex items-center gap-2 text-xs text-muted-foreground",
                 Spinner { class: "size-3.5" }
                 if scanning { "Starting…" } else { "Waiting for device" }
+            }
+            p { class: "max-w-sm text-xs text-muted-foreground",
+                "New or blank board? "
+                button { class: "text-primary underline-offset-4 hover:underline", onclick: move |_| page.set(Page::Firmware), "Install firmware" }
+                " from its bootloader."
             }
         }
     }
