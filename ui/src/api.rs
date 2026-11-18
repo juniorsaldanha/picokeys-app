@@ -539,3 +539,23 @@ pub async fn audit_log() -> Result<types::AuditLog, String> {
 pub async fn audit_export() -> Result<String, String> {
     call("audit_export", NONE).await
 }
+
+pub async fn vault_status(path: &str) -> Result<types::VaultStatus, String> {
+    call("vault_status", Args { path: Some(path), ..NONE }).await
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VaultExport<'a> {
+    path: &'a str,
+    pin: &'a str,
+    cred_id: &'a str,
+    name: &'a str,
+}
+/// Saves the passkey's encrypted package to ~/Downloads; returns the file path.
+pub async fn vault_export(path: &str, pin: &str, cred_id: &str, name: &str) -> Result<String, String> {
+    guarded("vault_export", VaultExport { path, pin, cred_id, name }).await
+}
+/// Picks a .pkv file and imports it; Ok(false) = cancelled.
+pub async fn vault_import(path: &str, pin: &str) -> Result<bool, String> {
+    guarded("vault_import", Args { path: Some(path), pin: Some(pin), ..NONE }).await
+}

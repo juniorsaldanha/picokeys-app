@@ -116,7 +116,7 @@ pub(crate) fn int(n: u64) -> Value {
     Value::Integer(n.into())
 }
 
-fn enc(v: &Value) -> R<Vec<u8>> {
+pub(crate) fn enc(v: &Value) -> R<Vec<u8>> {
     let mut b = vec![];
     ciborium::into_writer(v, &mut b).map_err(|e| e.to_string())?;
     Ok(b)
