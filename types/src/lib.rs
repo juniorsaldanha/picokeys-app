@@ -585,3 +585,12 @@ pub struct AdminStatus {
     pub unlocked: bool,
     pub seconds_left: Option<u32>,
 }
+
+/// Pico Vault enrollment (pico-fido 8.2+).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct VaultStatus {
+    pub enrolled: bool,
+    pub label: String,
+    /// Hex vault ID; keys enrolled in the same vault share it.
+    pub id: String,
+}
