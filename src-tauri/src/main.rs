@@ -16,9 +16,10 @@ mod pgp;
 mod pico;
 mod recovery;
 mod ssh;
+mod vault;
 
 use std::sync::Mutex;
-use types::{AgentStatus, Board, FidoPolicy, LargeBlobs, LegacyKey, GitSetup, GitSigning, NewSshKey, SshEnv, SshKey, Device, FlashProgress, FwRelease, FidoInfo, NewOath, NewOtp, OathAccount, OtpSlot, Passkey, Phy, PicoInfo};
+use types::{AgentStatus, Board, FidoPolicy, LargeBlobs, LegacyKey, GitSetup, GitSigning, NewSshKey, SshEnv, SshKey, Device, FlashProgress, FwRelease, FidoInfo, NewOath, NewOtp, OathAccount, OtpSlot, Passkey, Phy, PicoInfo, VaultStatus};
 
 /// One device conversation at a time: Pico firmware wedges if HID (CTAP) and
 /// CCID (rescue) requests overlap.
@@ -105,6 +106,40 @@ async fn fido_reset(path: String) -> Result<(), String> {
     audit::log("fido_reset", &detail, async move {
         admin::require()?;
         blocking(move || pico::fido_reset(&path)).await
+    }
+    .await)
+}
+
+#[tauri::command]
+async fn vault_status(path: String) -> Result<VaultStatus, String> {
+    blocking(move || vault::status(&path)).await
+}
+
+/// Saves one passkey's encrypted Vault package into ~/Downloads; returns the file path.
+#[tauri::command]
+async fn vault_export(path: String, pin: String, cred_id: String, name: String) -> Result<String, String> {
+    let detail = cred_id.clone();
+    audit::log("vault_export", &detail, async move {
+        admin::require()?;
+        let pkg = blocking(move || vault::export(&path, &pin, &cred_id)).await?;
+        save_download(&format!("{name}.pkv"), &pkg)
+    }
+    .await)
+}
+
+/// Picks a .pkv package and imports it. Ok(false) = cancelled.
+#[tauri::command]
+async fn vault_import(app: tauri::AppHandle, path: String, pin: String) -> Result<bool, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let f = tauri::async_runtime::spawn_blocking(move || app.dialog().file().add_filter("Pico Vault package", &["pkv"]).blocking_pick_file())
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some(file) = f.and_then(|f| f.into_path().ok()) else { return Ok(false) };
+    let detail = file.display().to_string();
+    audit::log("vault_import", &detail, async move {
+        admin::require()?;
+        let pkg = std::fs::read(&file).map_err(|e| e.to_string())?;
+        blocking(move || vault::import(&path, &pin, &pkg)).await.map(|_| true)
     }
     .await)
 }
@@ -679,7 +714,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             list_devices, fido_info, set_pin, change_pin, list_passkeys, delete_passkey, wink,
-            pico_info, write_phy, fido_reset,
+            pico_info, write_phy, fido_reset, vault_status, vault_export, vault_import,
             fido_policy,
             pico_time,
             admin_status,
