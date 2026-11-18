@@ -11,6 +11,7 @@ mod pgp;
 mod policy;
 mod ssh;
 mod ui;
+mod vault;
 
 use dioxus::prelude::*;
 use icons::{Cpu, FileKey, UserCog, Vault, Terminal, HardDriveDownload, Hand, KeyRound, LayoutDashboard, RectangleEllipsis, ShieldCheck, Usb};
