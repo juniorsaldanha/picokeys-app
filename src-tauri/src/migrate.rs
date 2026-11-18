@@ -353,7 +353,7 @@ mod tests {
         crate::ssh::setup_git(&setup).unwrap();
         crate::ssh::setup_git(&setup).unwrap(); // idempotent
         let g = std::fs::read_to_string(&gitcfg).unwrap();
-        assert!(g.contains("format = ssh") && g.contains(&format!("signingkey = {ed_pub}")) && g.contains("gpgsign = true"), "{g}");
+        assert!(g.contains("format = ssh") && g.contains("signingkey = ") && g.contains("id_ed25519_sk.pub") /* git escapes Windows backslashes */ && g.contains("gpgsign = true"), "{g}");
         let signers = std::fs::read_to_string(h.join(".config/git/allowed_signers")).unwrap();
         assert_eq!(signers.lines().count(), 1, "{signers}");
         assert!(signers.starts_with("me@example.com namespaces=\"git\" sk-ssh-ed25519@openssh.com "));
