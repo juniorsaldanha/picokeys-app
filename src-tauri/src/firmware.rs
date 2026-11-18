@@ -669,6 +669,14 @@ mod tests {
         flash(&a.url, Board::Esp32S3, &mut |p| if p.done == 0 || p.done == p.total { println!("{} {}/{}", p.stage, p.done, p.total) }).unwrap();
     }
 
+    /// Real key (writes it): what "Flash a file" runs. `PKM_FLASH_FILE=<image> cargo test -p picokeys-app -- --ignored live_flash_file --nocapture`
+    #[test]
+    #[ignore]
+    fn live_flash_file() {
+        let path = std::env::var("PKM_FLASH_FILE").unwrap();
+        flash_file(&path, Board::Esp32S3, &mut |p| if p.done == 0 || p.done == p.total { println!("{} {}/{}", p.stage, p.done, p.total) }).unwrap();
+    }
+
     /// Real key (rewrites everything after the bootloader): what the Restore button runs.
     /// `PKM_RESTORE=<backup made by the app> cargo test -p picokeys-app -- --ignored live_restore --nocapture`
     #[test]
