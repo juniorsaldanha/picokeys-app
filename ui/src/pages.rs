@@ -487,6 +487,7 @@ fn PasskeyList() -> Element {
         }
         {body}
         crate::policy::LargeBlobsCard {}
+        crate::vault::VaultCard { on_change: move |_| list.restart() }
     }
 }
 
@@ -573,6 +574,7 @@ fn PasskeyRow(
                     dd { class: "selectable break-all font-mono text-xs", "{k.cred_id}" }
                 }
                 crate::policy::PasskeyControls { cred_id: k.cred_id.clone(), on_change: move |_| on_change.call(()) }
+                crate::vault::VaultExportButton { cred_id: k.cred_id.clone(), rp_id: k.rp_id.clone() }
             }
         }
         }
