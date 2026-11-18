@@ -24,7 +24,7 @@ jobs:
         run: cat /usr/lib/udev/rules.d/70-pico-key.rules
       - name: Start the app
         run: |
-          bin=$(dpkg -c ./*.deb | grep -o '/usr/bin/[^ ]*' | head -1)
+          bin=$(dpkg -L "$(dpkg-deb -f ./*.deb Package)" | grep "^/usr/bin/." | head -1)
           echo "binary: $bin"
           xvfb-run -a -s "-screen 0 1280x800x24" bash -c "
             $bin > app.log 2>&1 & pid=\$!
